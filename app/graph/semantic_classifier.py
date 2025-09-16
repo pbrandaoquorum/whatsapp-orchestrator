@@ -301,11 +301,11 @@ async def classificar_semanticamente(texto: str, estado: GraphState) -> Classifi
         
     except CircuitBreakerError:
         logger.warning(
-            "Circuit breaker aberto - usando fallback determinístico",
+            "Circuit breaker aberto - LLM indisponível",
             texto=texto[:50]
         )
-        # Fallback para classificação determinística
-        return await _fallback_classificacao_deterministica(texto, estado)
+        # Fallback simples - apenas retorna indefinido
+        return await _fallback_classificacao_simples(texto, estado)
         
     except Exception as e:
         logger.error(
@@ -419,86 +419,14 @@ async def validar_com_judge(
         return resultado_original
 
 
-async def _fallback_classificacao_deterministica(texto: str, estado: GraphState) -> ClassificationResult:
+async def _fallback_classificacao_simples(texto: str, estado: GraphState) -> ClassificationResult:
     """
-    Fallback determinístico quando LLM não está disponível
-    Usa regras simples baseadas em palavras-chave
+    Fallback simples quando LLM não está disponível - apenas retorna indefinido
     """
-    texto_lower = texto.lower().strip()
-    
-    # Detectar confirmação de presença
-    palavras_presenca = ["cheguei", "chegei", "confirmo", "presente", "aqui"]
-    if any(palavra in texto_lower for palavra in palavras_presenca):
-        return ClassificationResult(
-            intent=IntentType.CONFIRMAR_PRESENCA,
-            confidence=0.7,
-            rationale="Fallback determinístico - palavras de confirmação detectadas"
-        )
-    
-    # Detectar cancelamento
-    palavras_cancelar = ["cancelar", "não posso", "nao posso", "imprevisto"]
-    if any(palavra in texto_lower for palavra in palavras_cancelar):
-        return ClassificationResult(
-            intent=IntentType.CANCELAR_PRESENCA,
-            confidence=0.7,
-            rationale="Fallback determinístico - palavras de cancelamento detectadas"
-        )
-    
-    # Detectar sinais vitais (usar extrator determinístico)
-    try:
-        from app.graph.clinical_extractor import extrair_sinais_vitais
-        resultado_vitais = extrair_sinais_vitais(texto)
-        
-        if resultado_vitais.processados:
-            return ClassificationResult(
-                intent=IntentType.SINAIS_VITAIS,
-                confidence=0.8,
-                rationale="Fallback determinístico - sinais vitais detectados",
-                vital_signs=resultado_vitais.processados
-            )
-    except Exception:
-        pass
-    
-    # Detectar finalização
-    palavras_finalizar = ["finalizar", "encerrar", "terminar", "acabar"]
-    if any(palavra in texto_lower for palavra in palavras_finalizar):
-        return ClassificationResult(
-            intent=IntentType.FINALIZAR_PLANTAO,
-            confidence=0.7,
-            rationale="Fallback determinístico - palavras de finalização detectadas"
-        )
-    
-    # Detectar confirmações genéricas
-    palavras_sim = ["sim", "ok", "okay", "confirmo", "beleza", "pode"]
-    if any(palavra in texto_lower for palavra in palavras_sim):
-        return ClassificationResult(
-            intent=IntentType.CONFIRMACAO_SIM,
-            confidence=0.6,
-            rationale="Fallback determinístico - confirmação positiva detectada"
-        )
-    
-    palavras_nao = ["não", "nao", "nunca", "jamais", "negativo"]
-    if any(palavra in texto_lower for palavra in palavras_nao):
-        return ClassificationResult(
-            intent=IntentType.CONFIRMACAO_NAO,
-            confidence=0.6,
-            rationale="Fallback determinístico - confirmação negativa detectada"
-        )
-    
-    # Se texto for longo (>20 chars), assumir nota clínica
-    if len(texto.strip()) > 20:
-        return ClassificationResult(
-            intent=IntentType.NOTA_CLINICA,
-            confidence=0.5,
-            rationale="Fallback determinístico - texto longo assumido como nota clínica",
-            clinical_note=texto.strip()
-        )
-    
-    # Fallback final
     return ClassificationResult(
         intent=IntentType.INDEFINIDO,
-        confidence=0.3,
-        rationale="Fallback determinístico - não foi possível classificar"
+        confidence=0.1,
+        rationale="LLM indisponível - não foi possível classificar sem análise semântica"
     )
 
 
@@ -545,11 +473,10 @@ def extrair_sinais_vitais_semanticos(vital_signs: Optional[Dict[str, Any]]) -> D
                 processados[chave_upper] = int(valor)
             elif isinstance(valor, str):
                 try:
-                    # Extrair número da string
-                    import re
-                    numeros = re.findall(r'\d+', valor)
-                    if numeros:
-                        processados[chave_upper] = int(numeros[0])
+                    # Tentar converter string para int (LLM deve extrair apenas números)
+                    valor_limpo = ''.join(c for c in valor if c.isdigit())
+                    if valor_limpo:
+                        processados[chave_upper] = int(valor_limpo)
                 except:
                     pass
         
@@ -559,12 +486,12 @@ def extrair_sinais_vitais_semanticos(vital_signs: Optional[Dict[str, Any]]) -> D
                 processados["Temp"] = float(valor)
             elif isinstance(valor, str):
                 try:
-                    # Extrair número decimal da string
-                    import re
-                    match = re.search(r'\d+[.,]\d+|\d+', valor)
-                    if match:
-                        temp_str = match.group().replace(',', '.')
-                        processados["Temp"] = float(temp_str)
+                    # Tentar converter string para float (LLM deve extrair formato correto)
+                    valor_limpo = valor.replace(',', '.')
+                    # Extrair apenas números e ponto decimal
+                    valor_numerico = ''.join(c for c in valor_limpo if c.isdigit() or c == '.')
+                    if valor_numerico:
+                        processados["Temp"] = float(valor_numerico)
                 except:
                     pass
     

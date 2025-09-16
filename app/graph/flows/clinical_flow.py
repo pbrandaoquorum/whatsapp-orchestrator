@@ -5,7 +5,7 @@ Implementa coleta incremental e two-phase commit
 from typing import Dict, Any, Optional
 from app.graph.state import GraphState
 from app.graph.clinical_extractor import (
-    extrair_sinais_vitais, SINAIS_VITAIS_OBRIGATORIOS,
+    extrair_sinais_vitais_semanticos, SINAIS_VITAIS_OBRIGATORIOS,
     validar_sinais_vitais_completos, gerar_resumo_sinais_vitais
 )
 from app.graph.tools import atualizar_dados_clinicos
@@ -14,7 +14,7 @@ from app.infra.tpc import (
     acao_pode_ser_executada, marcar_acao_confirmada,
     marcar_acao_executada, limpar_acao_pendente
 )
-from app.infra.confirm import is_yes, is_no
+from app.infra.confirm import is_yes_semantic, is_no_semantic, is_yes, is_no
 from app.infra.logging import obter_logger
 
 logger = obter_logger(__name__)

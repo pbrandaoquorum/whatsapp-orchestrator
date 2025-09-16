@@ -81,7 +81,7 @@ async def notas_flow(estado: GraphState) -> GraphState:
     
     # Processar sintomas via RAG
     try:
-        sintomas_identificados = processar_sintomas_via_rag(estado.nota.texto_bruto)
+        sintomas_identificados = await processar_sintomas_via_rag(estado.nota.texto_bruto)
         estado.nota.sintomas_rag = sintomas_identificados
         
         logger.info(
@@ -98,15 +98,19 @@ async def notas_flow(estado: GraphState) -> GraphState:
     return preparar_salvamento_nota(estado)
 
 
-def processar_sintomas_via_rag(texto_nota: str) -> List[Dict[str, Any]]:
+async def processar_sintomas_via_rag(texto_nota: str) -> List[Dict[str, Any]]:
     """
     Processa nota clínica via RAG Pinecone para identificar sintomas
     """
     if not texto_nota or len(texto_nota.strip()) < 10:
         return []
     
-    # Extrair termos relevantes da nota
-    termos_extraidos = extrair_termos_clinicos(texto_nota)
+    # Extrair termos relevantes da nota usando LLM semântico
+    try:
+        termos_extraidos = await extrair_termos_clinicos_semanticos(texto_nota)
+    except:
+        # Fallback para função legacy
+        termos_extraidos = extrair_termos_clinicos(texto_nota)
     
     if not termos_extraidos:
         return []
@@ -152,69 +156,46 @@ def processar_sintomas_via_rag(texto_nota: str) -> List[Dict[str, Any]]:
     return sintomas_unicos[:5]
 
 
+async def extrair_termos_clinicos_semanticos(texto: str) -> List[str]:
+    """
+    Extrai termos clínicos relevantes do texto usando LLM semântico
+    """
+    if not texto or len(texto.strip()) < 10:
+        return []
+    
+    try:
+        from app.graph.semantic_classifier import classify_semantic, IntentType
+        from app.graph.state import GraphState, CoreState
+        
+        # Criar estado mínimo para classificação
+        estado_temp = GraphState(
+            core=CoreState(session_id="temp", numero_telefone="temp"),
+            texto_usuario=texto
+        )
+        
+        # Classificar semanticamente
+        resultado = await classify_semantic(texto, estado_temp)
+        
+        if resultado.intent == IntentType.NOTA_CLINICA and resultado.clinical_note:
+            # O LLM já extraiu a nota clínica, usar como termo principal
+            return [resultado.clinical_note.strip()]
+        else:
+            # Usar o texto completo como termo
+            return [texto.strip()]
+    
+    except Exception:
+        # Fallback: usar o texto completo
+        return [texto.strip()]
+
+
 def extrair_termos_clinicos(texto: str) -> List[str]:
-    """
-    Extrai termos clínicos relevantes do texto usando heurísticas
-    """
-    import re
+    """DEPRECATED: Use extrair_termos_clinicos_semanticos() - fallback simples apenas"""
+    if not texto or len(texto.strip()) < 10:
+        return []
     
-    # Palavras-chave clínicas comuns
-    termos_clinicos = [
-        # Sintomas gerais
-        "dor", "febre", "cansaço", "fraqueza", "tontura", "náusea", "vômito",
-        "diarreia", "constipação", "insônia", "sonolência", "confusão",
-        
-        # Sintomas respiratórios
-        "tosse", "falta de ar", "dispneia", "chiado", "catarro", "escarro",
-        
-        # Sintomas cardiovasculares
-        "palpitação", "taquicardia", "bradicardia", "arritmia", "edema",
-        
-        # Sintomas neurológicos
-        "tremor", "convulsão", "paralisia", "dormência", "formigamento",
-        "cefaleia", "enxaqueca",
-        
-        # Sintomas digestivos
-        "azia", "refluxo", "gases", "cólica", "distensão", "perda de apetite",
-        
-        # Sintomas urinários
-        "disúria", "polaciúria", "incontinência", "retenção urinária",
-        
-        # Estados e comportamentos
-        "agitado", "ansioso", "deprimido", "irritado", "agressivo",
-        "consciente", "orientado", "confuso", "sonolento", "alerta"
-    ]
-    
-    texto_lower = texto.lower()
-    termos_encontrados = []
-    
-    # Buscar termos exatos
-    for termo in termos_clinicos:
-        if termo in texto_lower:
-            termos_encontrados.append(termo)
-    
-    # Extrair frases descritivas (padrões como "apresenta X", "refere Y")
-    padroes_descritivos = [
-        r'apresenta\s+([^.!?]+)',
-        r'refere\s+([^.!?]+)',
-        r'queixa\s+de\s+([^.!?]+)',
-        r'relatou\s+([^.!?]+)',
-        r'observado\s+([^.!?]+)'
-    ]
-    
-    for padrao in padroes_descritivos:
-        matches = re.findall(padrao, texto_lower)
-        for match in matches:
-            if len(match.strip()) > 3:
-                termos_encontrados.append(match.strip())
-    
-    # Remover duplicatas e termos muito curtos
-    termos_limpos = list(set([
-        termo.strip() for termo in termos_encontrados 
-        if len(termo.strip()) > 2
-    ]))
-    
-    return termos_limpos[:10]  # Limitar a 10 termos
+    # Fallback muito simples - dividir por frases
+    frases = [f.strip() for f in texto.split('.') if len(f.strip()) > 5]
+    return frases[:3] if frases else [texto.strip()]  # Limitar a 10 termos
 
 
 def solicitar_nota_clinica(estado: GraphState) -> GraphState:

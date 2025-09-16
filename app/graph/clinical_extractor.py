@@ -1,8 +1,7 @@
 """
-Extrator clínico determinístico para sinais vitais
-Usa regex e heurísticas, NUNCA LLM
+Utilitários para processamento de sinais vitais
+Agora usa apenas classificação semântica via LLM
 """
-import re
 from typing import Dict, Any, List
 from dataclasses import dataclass
 
@@ -17,133 +16,43 @@ class VitalsResult:
 # Sinais vitais obrigatórios
 SINAIS_VITAIS_OBRIGATORIOS = ["PA", "FC", "FR", "Sat", "Temp"]
 
-# Padrões regex para extração
-PADROES_PA = [
-    r'(?:PA|pressão|pressao)\s*:?\s*(\d{2,3})\s*[x/]\s*(\d{2,3})',
-    r'(\d{2,3})\s*[x/]\s*(\d{2,3})',  # formato direto 120x80
-    r'(?:PA|pressão|pressao)\s*:?\s*(\d{2,3})',  # apenas sistólica
-]
 
-PADROES_FC = [
-    r'(?:FC|frequencia cardiaca|freq cardiaca|batimentos)\s*:?\s*(\d{2,3})',
-    r'(\d{2,3})\s*bpm',
-]
-
-PADROES_FR = [
-    r'(?:FR|frequencia respiratoria|freq respiratoria|respiracao)\s*:?\s*(\d{1,2})',
-    r'(\d{1,2})\s*irpm',
-]
-
-PADROES_SAT = [
-    r'(?:Sat|saturacao|SpO2|oxigenacao)\s*:?\s*(\d{2,3})',
-    r'(\d{2,3})\s*%',
-]
-
-PADROES_TEMP = [
-    r'(?:Temp|temperatura|temp)\s*:?\s*(\d{2})[,.](\d{1,2})',
-    r'(\d{2})[,.](\d{1,2})\s*°?C?',
-]
-
-
-def extrair_pressao_arterial(texto: str) -> Dict[str, Any]:
-    """Extrai pressão arterial do texto"""
-    texto_limpo = texto.lower().strip()
-    
-    for padrao in PADROES_PA:
-        match = re.search(padrao, texto_limpo)
-        if match:
-            if len(match.groups()) == 2:
-                sistolica, diastolica = match.groups()
-                return {"PA": f"{sistolica}x{diastolica}"}
-            else:
-                sistolica = match.group(1)
-                return {"PA": f"{sistolica}x--"}
-    
-    return {}
-
-
-def extrair_frequencia_cardiaca(texto: str) -> Dict[str, Any]:
-    """Extrai frequência cardíaca do texto"""
-    texto_limpo = texto.lower().strip()
-    
-    for padrao in PADROES_FC:
-        match = re.search(padrao, texto_limpo)
-        if match:
-            fc = int(match.group(1))
-            if 40 <= fc <= 200:  # validação básica
-                return {"FC": fc}
-    
-    return {}
-
-
-def extrair_frequencia_respiratoria(texto: str) -> Dict[str, Any]:
-    """Extrai frequência respiratória do texto"""
-    texto_limpo = texto.lower().strip()
-    
-    for padrao in PADROES_FR:
-        match = re.search(padrao, texto_limpo)
-        if match:
-            fr = int(match.group(1))
-            if 8 <= fr <= 40:  # validação básica
-                return {"FR": fr}
-    
-    return {}
-
-
-def extrair_saturacao(texto: str) -> Dict[str, Any]:
-    """Extrai saturação de oxigênio do texto"""
-    texto_limpo = texto.lower().strip()
-    
-    for padrao in PADROES_SAT:
-        match = re.search(padrao, texto_limpo)
-        if match:
-            sat = int(match.group(1))
-            if 70 <= sat <= 100:  # validação básica
-                return {"Sat": sat}
-    
-    return {}
-
-
-def extrair_temperatura(texto: str) -> Dict[str, Any]:
-    """Extrai temperatura do texto"""
-    texto_limpo = texto.lower().strip()
-    
-    for padrao in PADROES_TEMP:
-        match = re.search(padrao, texto_limpo)
-        if match:
-            if len(match.groups()) == 2:
-                inteira, decimal = match.groups()
-                temp = float(f"{inteira}.{decimal}")
-            else:
-                temp = float(match.group(1))
-            
-            if 30.0 <= temp <= 45.0:  # validação básica
-                return {"Temp": temp}
-    
-    return {}
-
-
-def extrair_sinais_vitais(texto: str) -> VitalsResult:
+async def extrair_sinais_vitais_semanticos(texto: str) -> VitalsResult:
     """
-    Função principal para extrair todos os sinais vitais do texto
-    Retorna VitalsResult com processados e faltantes
+    Extrai sinais vitais usando classificação semântica via LLM
     """
     if not texto:
         return VitalsResult(processados={}, faltantes=SINAIS_VITAIS_OBRIGATORIOS.copy())
     
-    processados = {}
+    try:
+        from app.graph.semantic_classifier import classify_semantic
+        from app.graph.state import GraphState, CoreState
+        
+        # Criar estado mínimo para classificação
+        estado_temp = GraphState(
+            core=CoreState(session_id="temp", numero_telefone="temp"),
+            texto_usuario=texto
+        )
+        
+        # Classificar semanticamente
+        resultado = await classify_semantic(texto, estado_temp)
+        
+        if resultado.intent.value == "sinais_vitais" and resultado.vital_signs:
+            processados = resultado.vital_signs
+            faltantes = [sv for sv in SINAIS_VITAIS_OBRIGATORIOS if sv not in processados]
+            return VitalsResult(processados=processados, faltantes=faltantes)
     
-    # Extrair cada sinal vital
-    processados.update(extrair_pressao_arterial(texto))
-    processados.update(extrair_frequencia_cardiaca(texto))
-    processados.update(extrair_frequencia_respiratoria(texto))
-    processados.update(extrair_saturacao(texto))
-    processados.update(extrair_temperatura(texto))
+    except Exception:
+        # Em caso de erro, retornar vazio
+        pass
     
-    # Calcular faltantes
-    faltantes = [sv for sv in SINAIS_VITAIS_OBRIGATORIOS if sv not in processados]
-    
-    return VitalsResult(processados=processados, faltantes=faltantes)
+    return VitalsResult(processados={}, faltantes=SINAIS_VITAIS_OBRIGATORIOS.copy())
+
+
+# Manter função legacy para compatibilidade (agora async)
+async def extrair_sinais_vitais(texto: str) -> VitalsResult:
+    """Função principal para extrair sinais vitais - agora via LLM semântico"""
+    return await extrair_sinais_vitais_semanticos(texto)
 
 
 def normalizar_sinais_vitais(dados: Dict[str, Any]) -> Dict[str, Any]:

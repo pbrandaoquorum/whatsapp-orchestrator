@@ -1,129 +1,109 @@
 """
 Helpers para confirmação (sim/não) em português brasileiro
+Agora usa classificação semântica via LLM
 """
-import re
-from typing import Set
-
-# Palavras e expressões que indicam confirmação (SIM)
-CONFIRMACOES: Set[str] = {
-    "sim", "s", "ok", "okay", "confirmo", "confirma", "confirmado", "confere",
-    "certo", "perfeito", "exato", "correto", "isso", "isso mesmo", "é isso",
-    "tudo certo", "pode ser", "beleza", "blz", "show", "top", "positivo",
-    "afirmativo", "concordo", "aceito", "vamos", "vai", "dale", "bora",
-    "pode", "pode ir", "pode mandar", "manda", "enviar", "envie",
-    "👍", "✅", "✓", "1", "yes", "y"
-}
-
-# Palavras e expressões que indicam negação (NÃO)
-NEGACOES: Set[str] = {
-    "não", "nao", "n", "nunca", "jamais", "negativo", "não confirmo",
-    "nao confirmo", "não confere", "nao confere", "errado", "incorreto",
-    "falso", "não é isso", "nao e isso", "não é", "nao e", "para",
-    "pare", "cancela", "cancelar", "cancelado", "desisto", "não quero",
-    "nao quero", "recuso", "rejeito", "discordo", "não aceito",
-    "nao aceito", "👎", "❌", "✗", "0", "no", "nope"
-}
-
-# Padrões regex para confirmação
-PADROES_CONFIRMACAO = [
-    r'\bsim\b',
-    r'\bok\b',
-    r'\bconfirm[ao]\b',
-    r'\bcerto\b',
-    r'\bperfeito\b',
-    r'\bcorreto\b',
-    r'\bpositivo\b',
-    r'\bafirmativo\b',
-    r'\bconcordo\b',
-    r'\baceito\b',
-    r'\bpode\b',
-    r'\bmanda\b',
-    r'\benviar?\b',
-    r'👍|✅|✓',
-]
-
-# Padrões regex para negação
-PADROES_NEGACAO = [
-    r'\bnão\b|\bnao\b',
-    r'\bnunca\b',
-    r'\bjamais\b',
-    r'\bnegativo\b',
-    r'\berrado\b',
-    r'\bincorreto\b',
-    r'\bfalso\b',
-    r'\bpara\b|\bpare\b',
-    r'\bcancela\b|\bcancelar?\b',
-    r'\bdesisto\b',
-    r'\brecuso\b',
-    r'\brejeito\b',
-    r'\bdiscordo\b',
-    r'👎|❌|✗',
-]
+from typing import Optional
 
 
 def normalizar_texto(texto: str) -> str:
-    """Normaliza texto para comparação"""
+    """Normaliza texto para comparação básica"""
     if not texto:
         return ""
     
-    # Converter para lowercase
-    texto = texto.lower().strip()
-    
-    # Remover pontuação extra
-    texto = re.sub(r'[!.,;:?]+$', '', texto)
-    
-    # Normalizar espaços
-    texto = re.sub(r'\s+', ' ', texto)
-    
-    return texto
+    return texto.lower().strip()
 
 
-def is_yes(texto: str) -> bool:
+async def is_yes_semantic(texto: str) -> bool:
     """
-    Verifica se o texto indica confirmação (SIM)
+    Verifica se o texto indica confirmação (SIM) usando LLM semântico
     """
     if not texto:
         return False
     
-    texto_normalizado = normalizar_texto(texto)
+    try:
+        from app.graph.semantic_classifier import classify_semantic, IntentType
+        from app.graph.state import GraphState, CoreState
+        
+        # Criar estado mínimo para classificação
+        estado_temp = GraphState(
+            core=CoreState(session_id="temp", numero_telefone="temp"),
+            texto_usuario=texto
+        )
+        
+        # Classificar semanticamente
+        resultado = await classify_semantic(texto, estado_temp)
+        
+        return resultado.intent == IntentType.CONFIRMACAO_SIM
     
-    # Verificar palavras exatas
-    if texto_normalizado in CONFIRMACOES:
-        return True
+    except Exception:
+        # Fallback simples em caso de erro
+        return False
+
+
+async def is_no_semantic(texto: str) -> bool:
+    """
+    Verifica se o texto indica negação (NÃO) usando LLM semântico
+    """
+    if not texto:
+        return False
     
-    # Verificar padrões regex
-    for padrao in PADROES_CONFIRMACAO:
-        if re.search(padrao, texto_normalizado, re.IGNORECASE):
-            return True
+    try:
+        from app.graph.semantic_classifier import classify_semantic, IntentType
+        from app.graph.state import GraphState, CoreState
+        
+        # Criar estado mínimo para classificação
+        estado_temp = GraphState(
+            core=CoreState(session_id="temp", numero_telefone="temp"),
+            texto_usuario=texto
+        )
+        
+        # Classificar semanticamente
+        resultado = await classify_semantic(texto, estado_temp)
+        
+        return resultado.intent == IntentType.CONFIRMACAO_NAO
     
-    return False
+    except Exception:
+        # Fallback simples em caso de erro
+        return False
+
+
+async def classificar_resposta_semantica(texto: str) -> str:
+    """
+    Classifica resposta como 'sim', 'nao' ou 'indefinido' usando LLM semântico
+    """
+    if await is_yes_semantic(texto):
+        return "sim"
+    elif await is_no_semantic(texto):
+        return "nao"
+    else:
+        return "indefinido"
+
+
+# Funções legacy para compatibilidade (devem ser migradas gradualmente)
+def is_yes(texto: str) -> bool:
+    """DEPRECATED: Use is_yes_semantic() - fallback simples apenas"""
+    if not texto:
+        return False
+    
+    # Fallback muito básico apenas para compatibilidade
+    texto_lower = normalizar_texto(texto)
+    palavras_sim_basicas = ["sim", "s", "ok", "confirmo", "certo", "pode"]
+    return any(palavra in texto_lower for palavra in palavras_sim_basicas)
 
 
 def is_no(texto: str) -> bool:
-    """
-    Verifica se o texto indica negação (NÃO)
-    """
+    """DEPRECATED: Use is_no_semantic() - fallback simples apenas"""
     if not texto:
         return False
     
-    texto_normalizado = normalizar_texto(texto)
-    
-    # Verificar palavras exatas
-    if texto_normalizado in NEGACOES:
-        return True
-    
-    # Verificar padrões regex
-    for padrao in PADROES_NEGACAO:
-        if re.search(padrao, texto_normalizado, re.IGNORECASE):
-            return True
-    
-    return False
+    # Fallback muito básico apenas para compatibilidade
+    texto_lower = normalizar_texto(texto)
+    palavras_nao_basicas = ["não", "nao", "n", "negativo", "cancelar"]
+    return any(palavra in texto_lower for palavra in palavras_nao_basicas)
 
 
 def classificar_resposta(texto: str) -> str:
-    """
-    Classifica resposta como 'sim', 'nao' ou 'indefinido'
-    """
+    """DEPRECATED: Use classificar_resposta_semantica() - fallback simples apenas"""
     if is_yes(texto):
         return "sim"
     elif is_no(texto):
@@ -132,18 +112,9 @@ def classificar_resposta(texto: str) -> str:
         return "indefinido"
 
 
-def extrair_confirmacao_contexto(texto: str, contexto: str = "") -> str:
+async def extrair_confirmacao_contexto(texto: str, contexto: str = "") -> str:
     """
-    Extrai confirmação considerando contexto da pergunta
+    Extrai confirmação considerando contexto da pergunta usando LLM semântico
     """
-    # Primeiro tenta classificação direta
-    resultado = classificar_resposta(texto)
-    
-    if resultado != "indefinido":
-        return resultado
-    
-    # Se indefinido, pode tentar heurísticas baseadas no contexto
-    # Por exemplo, se o contexto é sobre "cancelar" e usuário diz "sim",
-    # isso significa confirmação de cancelamento
-    
-    return resultado
+    # Usar classificação semântica que já considera contexto
+    return await classificar_resposta_semantica(texto)

@@ -1,6 +1,6 @@
 # WhatsApp Orchestrator
 
-Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plantões domiciliares. Utiliza **classificação semântica via LLM (GPT-4o-mini)** com **LLM as a Judge** para substituir detecção por keywords, mantendo **determinismo** através de state machine explícita, **circuit breakers**, **cache inteligente** e **two-phase commit** para todas as ações críticas.
+Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plantões domiciliares. Utiliza **100% classificação semântica via LLM (GPT-4o-mini)** com **LLM as a Judge**, removendo completamente regex e keywords do código. Mantém **determinismo** através de state machine explícita, **circuit breakers**, **cache inteligente** e **two-phase commit** para todas as ações críticas.
 
 ## 🏗️ Arquitetura
 
@@ -8,7 +8,7 @@ Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plant�
 
 - **FastAPI**: API REST para receber mensagens e enviar respostas
 - **LangGraph**: Orquestração de fluxos com estado persistente
-- **Classificador Semântico**: LLM (GPT-4o-mini) + LLM as a Judge para classificação inteligente
+- **Classificador Semântico**: 100% LLM (GPT-4o-mini) + LLM as a Judge - SEM regex/keywords
 - **Router Determinístico**: State machine explícita com gates de negócio
 - **Circuit Breaker**: Proteção contra falhas de LLM e Lambda
 - **Cache Inteligente**: Memória + Redis para otimizar chamadas LLM
@@ -79,15 +79,20 @@ TIMEOUT_LAMBDAS=30
 MAX_RETRIES=3
 ```
 
-### Executar Aplicação
+### Teste Local
 
 ```bash
-# Desenvolvimento
+# Teste rápido de configuração
+python test_local.py
+
+# Se tudo OK, executar aplicação
 uvicorn app.api.main:app --reload
 
 # Produção
 uvicorn app.api.main:app --host 0.0.0.0 --port 8000
 ```
+
+> 📖 **Configuração Detalhada**: Veja `CONFIGURACAO_LOCAL.md` para instruções completas
 
 ## 📡 API Endpoints
 
@@ -141,10 +146,15 @@ Content-Type: application/json
 
 ## 🧠 Como Funciona
 
-### 1. Ciclo de Vida da Mensagem
+### 1. **100% Classificação Semântica**
+- **REMOVIDO**: Regex e keywords do código
+- **ADICIONADO**: LLM semântico para TUDO (confirmações, sinais vitais, notas)
+- **Mantido**: Keywords apenas nos prompts como few-shot examples
+
+### 2. Ciclo de Vida da Mensagem
 
 ```
-Mensagem WhatsApp → FastAPI → Dedupe → LangGraph → Router → Fluxo → Lambda → Resposta
+Mensagem WhatsApp → FastAPI → Dedupe → LangGraph → Router → LLM Semântico → Fluxo → Lambda → Resposta
 ```
 
 ### 2. Router Determinístico

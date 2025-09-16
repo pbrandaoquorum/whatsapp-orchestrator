@@ -117,14 +117,8 @@ async def processar_pergunta_pendente(estado: GraphState) -> str:
         
         except Exception as e:
             logger.error(f"Erro na classificação semântica de confirmação: {e}")
-            # Fallback para detecção simples
-            if is_yes(texto):
-                return estado.aux.acao_pendente.get("fluxo_destino")
-            elif is_no(texto):
-                estado.aux.acao_pendente = None
-                estado.aux.ultima_pergunta = None
-                estado.aux.fluxo_que_perguntou = None
-                return "auxiliar"
+            # Sem fallback - retornar auxiliar para nova tentativa
+            return "auxiliar"
     
     # Caso 2: Coleta incremental de sinais vitais
     if estado.aux.fluxo_que_perguntou == "clinical":
@@ -163,7 +157,7 @@ async def processar_pergunta_pendente(estado: GraphState) -> str:
         
         except Exception as e:
             logger.error(f"Erro na classificação semântica de sinais vitais: {e}")
-            # Manter no auxiliar para nova tentativa
+            # Sem fallback - manter no auxiliar para nova tentativa
             return "auxiliar"
     
     return None
@@ -203,7 +197,7 @@ async def processar_classificacao_semantica(estado: GraphState) -> Optional[str]
         
     except Exception as e:
         logger.error(f"Erro na classificação semântica: {e}")
-        return "auxiliar"  # Fallback seguro
+        return "auxiliar"  # Sem fallback - apenas auxiliar
 
 
 def processar_sinais_vitais_semanticos(estado: GraphState, vital_signs: Dict[str, Any]) -> str:

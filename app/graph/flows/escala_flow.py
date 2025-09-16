@@ -51,18 +51,8 @@ async def detectar_intencao_presenca_semantica(texto: str, estado: GraphState) -
     except Exception as e:
         logger.error(f"Erro na detecção semântica de presença: {e}")
         
-        # Fallback para detecção simples
-        texto_lower = texto.lower().strip()
-        
-        palavras_confirmar = ["cheguei", "chegei", "confirmo", "presente", "sim", "ok"]
-        palavras_cancelar = ["cancelar", "não posso", "nao posso", "não vou", "nao vou"]
-        
-        if any(palavra in texto_lower for palavra in palavras_confirmar):
-            return "confirmar"
-        elif any(palavra in texto_lower for palavra in palavras_cancelar):
-            return "cancelar"
-        else:
-            return "indefinido"
+        # Sem fallback - retornar indefinido
+        return "indefinido"
 
 
 def gerar_dados_plantao_para_confirmacao(estado: GraphState) -> Dict[str, Any]:
