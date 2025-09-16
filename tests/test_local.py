@@ -155,8 +155,8 @@ async def test_api_startup():
         from app.graph.semantic_classifier import classify_semantic
         print("✅ Classificador semântico importado")
         
-        from app.infra.redis_client import obter_cliente_redis
-        print("✅ Redis client importado")
+        from app.infra.dynamo_client import get_dynamo_client
+        print("✅ DynamoDB client importado")
         
         print("✅ API pronta para inicialização!\n")
         return True

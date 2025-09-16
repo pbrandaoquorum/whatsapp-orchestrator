@@ -89,8 +89,16 @@ async def inicializar_dependencias():
         except Exception as e:
             logger.warning(f"Erro ao testar Google Sheets: {e}")
         
-        # TODO: Inicializar Redis quando implementado
-        # TODO: Testar conexão com Lambdas
+        # Testar conexão com DynamoDB
+        try:
+            from app.infra.dynamo_client import health_check as dynamo_health
+            dynamo_status = await dynamo_health()
+            if dynamo_status["status"] == "healthy":
+                logger.info("DynamoDB conectado com sucesso")
+            else:
+                logger.warning("DynamoDB não está saudável", status=dynamo_status)
+        except Exception as e:
+            logger.warning(f"Erro ao testar DynamoDB: {e}")
         
         logger.info("Dependências inicializadas")
         
@@ -103,8 +111,7 @@ async def inicializar_dependencias():
 async def finalizar_dependencias():
     """Finaliza dependências da aplicação"""
     try:
-        # TODO: Fechar conexões Redis
-        # TODO: Cleanup de recursos
+        # Cleanup de recursos DynamoDB (conexões são gerenciadas pelo boto3)
         
         logger.info("Dependências finalizadas")
         
@@ -121,10 +128,14 @@ app = FastAPI(
 )
 
 # Configurar middlewares
-configurar_middlewares(app)  # Redis será passado quando implementado
+configurar_middlewares(app)
 
-# Incluir rotas
+# Incluir rotas principais
 app.include_router(router)
+
+# Incluir rotas DynamoDB como padrão
+from app.api.routes_dynamo import router as dynamo_router
+app.include_router(dynamo_router)
 
 
 # Exception handlers

@@ -1,161 +1,154 @@
 """
 Helpers para manipulação de estado via templates e eventos externos
+Usando DynamoDB para persistência
 """
-import pickle
-import time
 from typing import Optional
+from datetime import datetime
 from app.graph.state import GraphState, CoreState
-from app.infra.redis_client import obter_cliente_redis
+from app.infra.state_persistence import StateManager
 from app.infra.logging import obter_logger
 
 logger = obter_logger(__name__)
 
 
-async def carregar_estado_redis(phone_number: str) -> GraphState:
+async def carregar_estado_dynamo(phone_number: str) -> GraphState:
     """
-    Carrega estado da sessão do Redis para manipulação via templates
+    Carrega estado da sessão do DynamoDB para manipulação via templates
     """
     try:
-        redis_client = obter_cliente_redis()
-        session_id = f"session_{phone_number.replace('+', '')}"
+        # Criar session_id a partir do telefone
+        session_id = f"session_{phone_number.replace('+', '').replace('-', '').replace(' ', '')}"
         
-        # Buscar checkpoint no Redis
-        key = f"checkpoint:{session_id}"
-        data = await redis_client.get(key)
+        # Usar StateManager para carregar estado
+        state_manager = StateManager(session_id)
+        estado = await state_manager.load_state()
         
-        if data:
-            checkpoint_data = pickle.loads(data)
-            estado_dict = checkpoint_data.get("checkpoint", {})
-            
-            logger.info("Estado carregado do Redis", session_id=session_id, 
-                       keys=list(estado_dict.keys()))
-            
-            return GraphState(**estado_dict)
-        else:
-            # Estado inicial se não existe
-            logger.info("Criando estado inicial", session_id=session_id)
-            return GraphState(
-                core=CoreState(
-                    session_id=session_id,
-                    numero_telefone=phone_number
-                )
-            )
-            
+        logger.info("Estado carregado do DynamoDB", 
+                   session_id=session_id,
+                   version=estado.version)
+        
+        return estado
+        
     except Exception as e:
-        logger.error(f"Erro ao carregar estado do Redis: {e}")
-        # Fallback para estado inicial
+        logger.error(f"Erro ao carregar estado do DynamoDB: {e}", session_id=session_id)
+        # Fallback para estado limpo
         return GraphState(
             core=CoreState(
-                session_id=f"session_{phone_number.replace('+', '')}",
+                session_id=f"session_{phone_number.replace('+', '').replace('-', '').replace(' ', '')}",
                 numero_telefone=phone_number
             )
         )
 
 
-async def salvar_estado_redis(estado: GraphState) -> bool:
+async def salvar_estado_dynamo(phone_number: str, estado: GraphState) -> bool:
     """
-    Salva estado da sessão no Redis após manipulação via templates
+    Salva estado da sessão no DynamoDB após manipulação via templates
     """
     try:
-        redis_client = obter_cliente_redis()
-        key = f"checkpoint:{estado.core.session_id}"
+        session_id = f"session_{phone_number.replace('+', '').replace('-', '').replace(' ', '')}"
         
-        # Preparar dados para salvar
-        data = {
-            "checkpoint": estado.dict(),
-            "metadata": "updated_by_template",
-            "timestamp": time.time()
-        }
+        # Usar StateManager para salvar estado
+        state_manager = StateManager(session_id)
+        state_manager.state = estado
+        state_manager.version = estado.version
+        state_manager._loaded = True
         
-        # Salvar no Redis com TTL de 1 hora
-        await redis_client.setex(key, 3600, pickle.dumps(data))
+        sucesso = await state_manager.save_state()
         
-        logger.info("Estado salvo no Redis", session_id=estado.core.session_id)
-        return True
+        if sucesso:
+            logger.info("Estado salvo no DynamoDB", 
+                       session_id=session_id,
+                       version=estado.version)
+        
+        return sucesso
         
     except Exception as e:
-        logger.error(f"Erro ao salvar estado no Redis: {e}")
+        logger.error(f"Erro ao salvar estado no DynamoDB: {e}", session_id=session_id)
         return False
 
 
-def preparar_estado_para_template(estado: GraphState, template: str, metadata: dict) -> GraphState:
+async def atualizar_estado_template(phone_number: str, template: str, metadata: dict) -> bool:
     """
-    Prepara estado baseado no tipo de template enviado
+    Atualiza estado baseado no template disparado
     """
-    if template == "confirmar_presenca":
-        # Preparar para confirmação de presença
-        estado.aux.ultima_pergunta = "Aguardando confirmação de presença..."
-        estado.aux.fluxo_que_perguntou = "escala"
-        estado.metadados["template_enviado"] = "confirmar_presenca"
-        estado.metadados["aguardando_confirmacao"] = True
+    try:
+        # Carregar estado atual
+        estado = await carregar_estado_dynamo(phone_number)
         
-    elif template == "pedir_sinais_vitais":
-        # Preparar para coleta de sinais vitais
-        estado.aux.ultima_pergunta = "Aguardando sinais vitais..."
-        estado.aux.fluxo_que_perguntou = "clinical"
-        estado.metadados["template_enviado"] = "pedir_sinais_vitais"
-        estado.metadados["aguardando_sinais_vitais"] = True
-        
-        # Se há hint de campos faltantes
-        if "hint_campos_faltantes" in metadata:
-            estado.vitais.faltantes = metadata["hint_campos_faltantes"]
+        # Atualizar estado baseado no template
+        if template == "pedir_sinais_vitais":
+            estado.aux.ultima_pergunta = "Aguardando sinais vitais..."
+            estado.aux.fluxo_que_perguntou = "clinical"
             
-    elif template == "pedir_nota_clinica":
-        # Preparar para coleta de nota clínica
-        estado.aux.ultima_pergunta = "Aguardando nota clínica..."
-        estado.aux.fluxo_que_perguntou = "notas"
-        estado.metadados["template_enviado"] = "pedir_nota_clinica"
-        estado.metadados["aguardando_nota"] = True
+            # Se há campos faltantes nos metadados, usar
+            if "hint_campos_faltantes" in metadata:
+                estado.vitais.faltantes = metadata["hint_campos_faltantes"]
+                
+        elif template == "confirmar_presenca":
+            estado.aux.ultima_pergunta = "Aguardando confirmação de presença..."
+            estado.aux.fluxo_que_perguntou = "escala"
+            
+        elif template == "pedir_nota_clinica":
+            estado.aux.ultima_pergunta = "Aguardando nota clínica..."
+            estado.aux.fluxo_que_perguntou = "notas"
+            
+        elif template == "finalizar_plantao":
+            estado.aux.ultima_pergunta = "Aguardando confirmação para finalizar..."
+            estado.aux.fluxo_que_perguntou = "finalizar"
         
-    elif template == "finalizar_plantao":
-        # Preparar para finalização
-        estado.aux.ultima_pergunta = "Aguardando confirmação de finalização..."
-        estado.aux.fluxo_que_perguntou = "finalizar"
-        estado.metadados["template_enviado"] = "finalizar_plantao"
-        estado.metadados["aguardando_finalizacao"] = True
+        # Adicionar metadados do template
+        if not estado.metadados:
+            estado.metadados = {}
+            
+        estado.metadados.update({
+            "last_template": template,
+            "template_fired_at": datetime.utcnow().isoformat() + 'Z',
+            "template_metadata": metadata
+        })
         
-    else:
-        # Template genérico
-        estado.metadados["template_enviado"] = template
-        estado.metadados["template_metadata"] = metadata
-    
-    # Marcar timestamp do template
-    estado.metadados["template_timestamp"] = time.time()
-    
-    logger.info("Estado preparado para template", 
-               template=template, 
-               session_id=estado.core.session_id)
-    
-    return estado
-
-
-def limpar_flags_template(estado: GraphState) -> GraphState:
-    """
-    Limpa flags relacionadas a templates após processamento
-    """
-    flags_para_limpar = [
-        "template_enviado",
-        "aguardando_confirmacao", 
-        "aguardando_sinais_vitais",
-        "aguardando_nota",
-        "aguardando_finalizacao",
-        "template_timestamp",
-        "template_metadata"
-    ]
-    
-    for flag in flags_para_limpar:
-        if flag in estado.metadados:
-            del estado.metadados[flag]
-    
-    return estado
-
-
-def verificar_template_expirado(estado: GraphState, timeout_seconds: int = 600) -> bool:
-    """
-    Verifica se template expirou (padrão: 10 minutos)
-    """
-    timestamp = estado.metadados.get("template_timestamp")
-    if not timestamp:
+        # Salvar estado atualizado
+        sucesso = await salvar_estado_dynamo(phone_number, estado)
+        
+        if sucesso:
+            logger.info("Estado atualizado via template", 
+                       phone_number=phone_number[:4] + "****",
+                       template=template)
+        
+        return sucesso
+        
+    except Exception as e:
+        logger.error(f"Erro ao atualizar estado via template: {e}",
+                    phone_number=phone_number[:4] + "****",
+                    template=template)
         return False
-    
-    return (time.time() - timestamp) > timeout_seconds
+
+
+async def obter_resumo_estado(phone_number: str) -> dict:
+    """
+    Obtém resumo do estado atual para debug/monitoring
+    """
+    try:
+        estado = await carregar_estado_dynamo(phone_number)
+        
+        return {
+            "session_id": estado.core.session_id,
+            "phone_number": phone_number[:4] + "****",
+            "version": estado.version,
+            "turno_permitido": estado.core.turno_permitido,
+            "presenca_confirmada": estado.metadados.get("presenca_confirmada", False),
+            "sinais_vitais_coletados": bool(estado.vitais.processados),
+            "nota_clinica": bool(estado.nota.texto_bruto),
+            "acao_pendente": bool(estado.aux.acao_pendente),
+            "ultima_pergunta": estado.aux.ultima_pergunta,
+            "fluxo_que_perguntou": estado.aux.fluxo_que_perguntou,
+            "timestamp": datetime.utcnow().isoformat() + 'Z'
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro ao obter resumo do estado: {e}")
+        return {"error": str(e)}
+
+
+# Aliases para compatibilidade com código existente
+carregar_estado_redis = carregar_estado_dynamo
+salvar_estado_redis = salvar_estado_dynamo

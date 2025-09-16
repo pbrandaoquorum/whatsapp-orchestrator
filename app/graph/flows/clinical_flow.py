@@ -100,8 +100,8 @@ async def processar_entrada_clinica_semantica(estado: GraphState) -> None:
 
 async def processar_entrada_fallback(estado: GraphState, texto: str) -> None:
     """Processamento fallback quando classificação semântica falha"""
-    # Usar extrator determinístico como fallback
-    resultado_vitais = extrair_sinais_vitais(texto)
+    # Usar extrator semântico como fallback
+    resultado_vitais = await extrair_sinais_vitais_semanticos(texto)
     
     if resultado_vitais.processados:
         estado.vitais.processados.update(resultado_vitais.processados)
@@ -116,13 +116,13 @@ async def processar_entrada_fallback(estado: GraphState, texto: str) -> None:
         )
     
     # Verificar se é nota clínica por heurísticas
-    nota_clinica = extrair_nota_clinica(texto)
+    nota_clinica = await extrair_nota_clinica(texto)
     if nota_clinica:
         estado.nota.texto_bruto = nota_clinica
         logger.info("Nota clínica detectada via fallback", tamanho=len(nota_clinica))
 
 
-def extrair_nota_clinica(texto: str) -> Optional[str]:
+async def extrair_nota_clinica(texto: str) -> Optional[str]:
     """
     Extrai nota clínica do texto usando heurísticas
     """
@@ -141,7 +141,7 @@ def extrair_nota_clinica(texto: str) -> Optional[str]:
     # Se contém indicadores de nota clínica e não é apenas sinais vitais
     if any(indicador in texto_lower for indicador in indicadores_nota):
         # Verificar se não é apenas sinais vitais
-        resultado_vitais = extrair_sinais_vitais(texto)
+        resultado_vitais = await extrair_sinais_vitais_semanticos(texto)
         if not resultado_vitais.processados or len(texto.strip()) > 50:
             return texto.strip()
     

@@ -1,6 +1,6 @@
 # WhatsApp Orchestrator
 
-Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plantões domiciliares. Utiliza **100% classificação semântica via LLM (GPT-4o-mini)** com **LLM as a Judge**, removendo completamente regex e keywords do código. Mantém **determinismo** através de state machine explícita, **circuit breakers**, **cache inteligente** e **two-phase commit** para todas as ações críticas.
+Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plantões domiciliares. Utiliza **100% classificação semântica via LLM (GPT-4o-mini)** com **LLM as a Judge**, removendo completamente regex e keywords do código. Usa **DynamoDB** para persistência de estado com **OCC (Optimistic Concurrency Control)**, **locks distribuídos**, **idempotência** e **two-phase commit** para todas as ações críticas.
 
 ## 🏗️ Arquitetura
 
@@ -8,12 +8,12 @@ Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plant�
 
 - **FastAPI**: API REST para receber mensagens e enviar respostas
 - **LangGraph**: Orquestração de fluxos com estado persistente
+- **DynamoDB**: Persistência de estado com OCC, locks distribuídos e idempotência
 - **Classificador Semântico**: 100% LLM (GPT-4o-mini) + LLM as a Judge - SEM regex/keywords
 - **Router Determinístico**: State machine explícita com gates de negócio
 - **Circuit Breaker**: Proteção contra falhas de LLM e Lambda
-- **Cache Inteligente**: Memória + Redis para otimizar chamadas LLM
+- **Two-Phase Commit**: Confirmação obrigatória para ações críticas
 - **4 Lambdas AWS**: Integração com sistema existente via HTTP
-- **Redis**: Checkpointing e cache
 - **Pinecone**: RAG para identificação de sintomas
 - **Google Sheets**: Base de dados de sintomas
 
@@ -30,10 +30,10 @@ Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plant�
 ### Pré-requisitos
 
 - Python 3.11+
-- Redis (para checkpointing)
-- Conta Pinecone (para RAG)
-- Conta Google Cloud (para Sheets)
-- Chaves de API (OpenAI, Pinecone, etc.)
+- AWS Account com DynamoDB
+- Conta OpenAI (obrigatório para classificação semântica)
+- Conta Pinecone (para RAG - opcional)
+- Conta Google Cloud (para Sheets - opcional)
 
 ### Instalação
 
@@ -52,26 +52,41 @@ cp env.example .env
 ### Configuração (.env)
 
 ```bash
-# Redis
-REDIS_URL=redis://user:pass@host:11078/0
+# AWS Configuration (OBRIGATÓRIO)
+AWS_REGION=sa-east-1
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
 
-# Lambdas AWS  
-LAMBDA_GET_SCHEDULE=https://f35khigesh.execute-api.sa-east-1.amazonaws.com/default/getScheduleStarted
-LAMBDA_UPDATE_SCHEDULE=https://f35khigesh.execute-api.sa-east-1.amazonaws.com/default/updateWorkScheduleResponse
-LAMBDA_UPDATE_CLINICAL=https://aitacl3wg8.execute-api.sa-east-1.amazonaws.com/Prod/updateClinicalData
-LAMBDA_UPDATE_SUMMARY=https://f35khigesh.execute-api.sa-east-1.amazonaws.com/default/updateReportSummaryAD
+# DynamoDB Tables
+DDB_TABLE_SESSIONS=OrchestratorSessions
+DDB_TABLE_PENDING_ACTIONS=PendingActions
+DDB_TABLE_CONV_BUFFER=ConversationBuffer
+DDB_TABLE_LOCKS=Locks
+DDB_TABLE_IDEMPOTENCY=Idempotency
 
-# Pinecone RAG
+# OpenAI (OBRIGATÓRIO para classificação semântica)
+OPENAI_API_KEY=your_openai_api_key
+
+# Lambdas AWS (OBRIGATÓRIO para integração)
+LAMBDA_GET_SCHEDULE=https://your-lambda.execute-api.sa-east-1.amazonaws.com/default/getScheduleStarted
+LAMBDA_UPDATE_SCHEDULE=https://your-lambda.execute-api.sa-east-1.amazonaws.com/default/updateWorkScheduleResponse
+LAMBDA_UPDATE_CLINICAL=https://your-lambda.execute-api.sa-east-1.amazonaws.com/Prod/updateClinicalData
+LAMBDA_UPDATE_SUMMARY=https://your-lambda.execute-api.sa-east-1.amazonaws.com/default/updateReportSummaryAD
+
+# Pinecone (OPCIONAL para RAG)
 PINECONE_API_KEY=your_pinecone_api_key
 PINECONE_ENV=your_pinecone_environment  
 PINECONE_INDEX=sintomas-index
 
-# Google Sheets
+# Google Sheets (OPCIONAL)
 GOOGLE_SHEETS_ID=your_google_sheets_id
 GOOGLE_SERVICE_ACCOUNT_JSON=path/to/service-account.json
 
-# OpenAI (fallback LLM)
-OPENAI_API_KEY=your_openai_api_key
+# TTL Configuration
+SESSION_TTL_DAYS=7
+BUFFER_TTL_DAYS=7
+IDEMPOTENCY_TTL_SECONDS=600
+LOCK_TTL_SECONDS=10
 
 # Configurações
 LOG_LEVEL=INFO
@@ -79,28 +94,40 @@ TIMEOUT_LAMBDAS=30
 MAX_RETRIES=3
 ```
 
-### Teste Local
+### Setup Completo
 
 ```bash
-# Teste rápido de configuração
-python test_local.py
+# 1. Instalar dependências
+pip install -e .
 
-# Se tudo OK, executar aplicação
+# 2. Configurar .env
+cp env.example .env
+# Editar .env com suas credenciais AWS, OpenAI e Lambdas
+
+# 3. Criar tabelas DynamoDB
+python scripts/create_dynamo_tables.py
+
+# 4. Executar testes
+pytest tests/test_dynamo_store.py -v
+
+# 5. Executar aplicação
 uvicorn app.api.main:app --reload
 
-# Produção
-uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+# 6. Testar endpoint
+curl -X POST http://localhost:8000/webhook/ingest \
+  -H "Content-Type: application/json" \
+  -H "X-Idempotency-Key: test-123" \
+  -d '{"message_id":"test","phoneNumber":"+5511999999999","text":"cheguei"}'
 ```
-
-> 📖 **Configuração Detalhada**: Veja `CONFIGURACAO_LOCAL.md` para instruções completas
 
 ## 📡 API Endpoints
 
-### Webhook Principal
+### Webhook Principal (DynamoDB)
 
 ```http
-POST /webhook/whatsapp
+POST /webhook/ingest
 Content-Type: application/json
+X-Idempotency-Key: unique-key-123
 
 {
   "message_id": "msg_123456",
@@ -120,11 +147,12 @@ Content-Type: application/json
 }
 ```
 
-### Notificação de Template
+### Notificação de Template (DynamoDB)
 
 ```http
-POST /events/template-sent
+POST /hooks/template-fired
 Content-Type: application/json
+X-Template-Idempotency-Key: template-456
 
 {
   "phoneNumber": "+5511999999999",
@@ -138,11 +166,12 @@ Content-Type: application/json
 
 ### Outros Endpoints
 
-- `GET /healthz` - Health check
-- `GET /readyz` - Readiness check  
-- `POST /graph/debug/run` - Debug do grafo
-- `POST /rag/sync` - Sincronizar base de sintomas
-- `POST /rag/search` - Buscar sintomas similares
+- `GET /healthz` - Health check básico
+- `GET /readyz` - Readiness check com DynamoDB
+- `GET /sessions/{session_id}/state` - Debug: estado da sessão
+- `GET /sessions/{session_id}/conversation` - Debug: histórico
+- `GET /debug/dynamo/tables` - Status das tabelas DynamoDB
+- `GET /metrics/sessions` - Métricas das sessões
 
 ## 🧠 Como Funciona
 
@@ -151,11 +180,19 @@ Content-Type: application/json
 - **ADICIONADO**: LLM semântico para TUDO (confirmações, sinais vitais, notas)
 - **Mantido**: Keywords apenas nos prompts como few-shot examples
 
-### 2. Ciclo de Vida da Mensagem
+### 2. Ciclo de Vida da Mensagem (DynamoDB)
 
 ```
-Mensagem WhatsApp → FastAPI → Dedupe → LangGraph → Router → LLM Semântico → Fluxo → Lambda → Resposta
+Mensagem WhatsApp → FastAPI → Idempotência → Lock Sessão → DynamoDB Load → LangGraph → Router → LLM Semântico → Fluxo → Lambda → DynamoDB Save → Resposta
 ```
+
+### 3. Persistência e Concorrência
+
+- **Estado de Sessão**: DynamoDB com OCC (Optimistic Concurrency Control)
+- **Locks Distribuídos**: Previne processamento concorrente da mesma sessão
+- **Two-Phase Commit**: Confirmação obrigatória antes de executar ações críticas
+- **Idempotência**: Headers X-Idempotency-Key previnem reprocessamento
+- **Memória de Conversa**: Buffer temporal no DynamoDB com TTL automático
 
 ### 2. Router Determinístico
 

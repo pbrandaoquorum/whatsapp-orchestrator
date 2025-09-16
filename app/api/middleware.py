@@ -206,7 +206,7 @@ def configurar_cors(app):
     )
 
 
-def configurar_middlewares(app, redis_client=None):
+def configurar_middlewares(app):
     """Configura todos os middlewares da aplicação"""
     
     # Middleware de segurança (primeiro)
@@ -215,9 +215,9 @@ def configurar_middlewares(app, redis_client=None):
     # CORS
     configurar_cors(app)
     
-    # Deduplicação (se Redis disponível)
-    if redis_client:
-        app.add_middleware(DeduplicationMiddleware, redis_client=redis_client)
+    # State persistence middleware para DynamoDB
+    from app.infra.state_persistence import StatePersistenceMiddleware
+    app.add_middleware(StatePersistenceMiddleware)
     
     # Logging (último, para capturar tudo)
     app.add_middleware(LoggingMiddleware)

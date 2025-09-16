@@ -65,3 +65,6 @@ class GraphState(BaseModel):
     # Controle do fluxo do grafo
     terminar_fluxo: bool = False  # Marca se deve terminar o grafo
     continuar_fluxo: bool = False  # Marca se deve continuar no router
+    
+    # Controle de versão para OCC (Optimistic Concurrency Control)
+    version: int = Field(default=0, description="Versão do estado para controle de concorrência")

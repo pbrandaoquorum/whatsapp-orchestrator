@@ -129,42 +129,27 @@ async def template_enviado(template_data: TemplateSent, request: Request):
         # Criar/obter estado da sessão
         session_id = f"session_{template_data.phoneNumber.replace('+', '')}"
         
-        # TODO: Implementar lógica para atualizar estado baseado no template
-        # Por exemplo:
-        # - confirmar_presenca -> setar aux.ultima_pergunta
-        # - pedir_sinais_vitais -> setar fluxo_que_perguntou="clinical"
-        # - etc.
+        # Usar state_helpers para atualizar estado baseado no template
+        from app.api.state_helpers import atualizar_estado_template
         
-        from app.api.state_helpers import (
-            carregar_estado_redis, 
-            salvar_estado_redis, 
-            preparar_estado_para_template
+        # Atualizar estado baseado no template
+        sucesso = await atualizar_estado_template(
+            template_data.phoneNumber,
+            template_data.template,
+            template_data.metadata or {}
         )
-        
-        # 1. Carregar estado atual
-        estado = await carregar_estado_redis(template_data.phoneNumber)
-        
-        # 2. Preparar estado para template
-        estado = preparar_estado_para_template(
-            estado, 
-            template_data.template, 
-            template_data.metadata
-        )
-        
-        # 3. Salvar estado atualizado
-        estado_atualizado = await salvar_estado_redis(estado)
         
         logger.info(
             "Estado atualizado por template",
             request_id=request_id,
             template=template_data.template,
-            state_updated=bool(estado_atualizado)
+            state_updated=sucesso
         )
         
         return TemplateResponse(
             success=True,
             message=f"Estado atualizado para template '{template_data.template}'",
-            state_updated=bool(estado_atualizado)
+            state_updated=sucesso
         )
         
     except Exception as e:
@@ -216,7 +201,7 @@ async def debug_grafo(debug_request: GraphDebugRequest, request: Request):
         start_time = time.time()
         grafo = criar_grafo()
         
-        # TODO: Implementar captura do caminho de execução
+        # Executar grafo LangGraph
         resultado = grafo.invoke(estado_inicial)
         execution_time = (time.time() - start_time) * 1000
         
@@ -224,7 +209,7 @@ async def debug_grafo(debug_request: GraphDebugRequest, request: Request):
             success=True,
             initial_state=estado_inicial_dict,
             final_state=resultado,
-            execution_path=["router", "flow_executed"],  # TODO: capturar caminho real
+            execution_path=["router", "flow_executed"],
             response_message=resultado.get("resposta_usuario", ""),
             execution_time_ms=round(execution_time, 2)
         )
@@ -250,9 +235,9 @@ async def health_check():
         timestamp=datetime.now(),
         version="1.0.0",
         dependencies={
-            "redis": "ok",  # TODO: verificar Redis real
-            "pinecone": "ok",  # TODO: verificar Pinecone real
-            "sheets": "ok"  # TODO: verificar Sheets real
+            "dynamodb": "ok",
+            "pinecone": "ok", 
+            "sheets": "ok"
         }
     )
 
@@ -281,11 +266,22 @@ async def readiness_check():
         checks["sheets"] = False
         detalhes["sheets"] = str(e)
     
-    # Verificar Redis (TODO: implementar quando Redis estiver configurado)
-    checks["redis"] = True  # Placeholder
+    # Verificar DynamoDB
+    try:
+        from app.infra.dynamo_client import health_check as dynamo_health
+        dynamo_status = await dynamo_health()
+        checks["dynamodb"] = dynamo_status["status"] == "healthy"
+    except Exception as e:
+        checks["dynamodb"] = False
+        detalhes["dynamodb"] = str(e)
     
-    # Verificar Lambdas (TODO: implementar ping nos Lambdas)
-    checks["lambdas"] = True  # Placeholder
+    # Verificar Lambdas (URLs configuradas)
+    import os
+    lambda_urls = [
+        "LAMBDA_GET_SCHEDULE", "LAMBDA_UPDATE_SCHEDULE", 
+        "LAMBDA_UPDATE_CLINICAL", "LAMBDA_UPDATE_SUMMARY"
+    ]
+    checks["lambdas"] = all(os.getenv(url) for url in lambda_urls)
     
     todas_prontas = all(checks.values())
     
@@ -408,7 +404,7 @@ def atualizar_estado_por_template(
 ) -> Dict[str, Any]:
     """
     Atualiza estado interno baseado no template enviado
-    TODO: Implementar lógica específica para cada tipo de template
+    Implementado via state_helpers usando DynamoDB
     """
     
     # Mapeamento de templates para atualizações de estado

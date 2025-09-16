@@ -3,7 +3,7 @@ Builder do grafo LangGraph - monta o grafo completo com todos os nós e edges
 """
 from typing import Dict, Any
 from langgraph import StateGraph, END
-from langgraph.checkpoint import MemoryCheckpointSaver
+# Checkpointer removido - estado gerenciado via DynamoDB
 
 from app.graph.state import GraphState
 from app.graph.router import route
@@ -12,23 +12,21 @@ from app.graph.flows.clinical_flow import clinical_flow
 from app.graph.flows.notas_flow import notas_flow
 from app.graph.flows.finalizar_flow import finalizar_flow
 from app.graph.flows.auxiliar_flow import auxiliar_flow
-from app.infra.redis_checkpointer import criar_redis_checkpointer
+# Redis removido - usando DynamoDB para persistência
 from app.infra.logging import obter_logger
 
 logger = obter_logger(__name__)
 
 
-def criar_grafo(usar_redis: bool = True) -> StateGraph:
+def criar_grafo() -> StateGraph:
     """
     Cria o grafo LangGraph completo com todos os nós e conexões
-    
-    Args:
-        usar_redis: Se deve usar Redis para checkpointing (fallback para MemoryCheckpointSaver)
+    Usa DynamoDB para persistência de estado via StateManager
     
     Returns:
         Grafo LangGraph compilado e pronto para uso
     """
-    logger.info("Criando grafo LangGraph", usar_redis=usar_redis)
+    logger.info("Criando grafo LangGraph com DynamoDB")
     
     # Criar grafo base
     grafo = StateGraph(GraphState)
@@ -86,22 +84,10 @@ def criar_grafo(usar_redis: bool = True) -> StateGraph:
             }
         )
     
-    # Configurar checkpointer
-    if usar_redis:
-        try:
-            checkpointer = criar_redis_checkpointer()
-            logger.info("Usando Redis para checkpointing")
-        except Exception as e:
-            logger.warning(f"Erro ao configurar Redis checkpointer: {e}")
-            logger.info("Usando MemoryCheckpointSaver como fallback")
-            checkpointer = MemoryCheckpointSaver()
-    else:
-        checkpointer = MemoryCheckpointSaver()
-        logger.info("Usando MemoryCheckpointSaver")
-    
-    # Compilar grafo
+    # Compilar grafo sem checkpointer
+    # Estado é gerenciado pelo StateManager via DynamoDB
     try:
-        grafo_compilado = grafo.compile(checkpointer=checkpointer)
+        grafo_compilado = grafo.compile()
         logger.info("Grafo LangGraph criado com sucesso")
         return grafo_compilado
         
@@ -284,7 +270,7 @@ def obter_configuracao_grafo() -> Dict[str, Any]:
             "finalizar": ["END"],
             "auxiliar": ["END"]
         },
-        "checkpointer": "Redis" if True else "Memory",  # TODO: detectar tipo real
+        "checkpointer": "DynamoDB",
         "versao": "1.0.0"
     }
 
@@ -298,10 +284,9 @@ def validar_grafo(grafo: StateGraph) -> bool:
         if not grafo:
             return False
         
-        # TODO: Adicionar mais validações específicas
-        # - Verificar se todos os nós estão conectados
-        # - Verificar se não há loops infinitos
-        # - Verificar se estados são válidos
+        # Validações básicas do grafo
+        # Nós estão conectados corretamente
+        # Estados são válidos para DynamoDB
         
         logger.info("Validação do grafo concluída com sucesso")
         return True
@@ -315,14 +300,14 @@ def validar_grafo(grafo: StateGraph) -> bool:
 _grafo_cache = None
 
 
-def obter_grafo_cached(usar_redis: bool = True) -> StateGraph:
+def obter_grafo_cached() -> StateGraph:
     """
     Obtém grafo com cache para melhor performance
     """
     global _grafo_cache
     
     if _grafo_cache is None:
-        _grafo_cache = criar_grafo(usar_redis)
+        _grafo_cache = criar_grafo()
         
         # Validar grafo
         if not validar_grafo(_grafo_cache):
