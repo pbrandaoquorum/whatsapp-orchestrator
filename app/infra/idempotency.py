@@ -298,18 +298,20 @@ async def cleanup_expired_keys() -> int:
 
 
 # Decoradores pré-configurados para casos comuns
-webhook_idempotent = functools.partial(
-    idempotent,
-    header="X-Idempotency-Key",
-    ttl=600,  # 10 minutos
-    required=True,
-    extract_session_id=extract_session_from_phone
-)
+def webhook_idempotent(func):
+    """Decorator para webhooks com idempotência"""
+    return idempotent(
+        header="X-Idempotency-Key",
+        ttl=600,  # 10 minutos
+        required=True,
+        extract_session_id=extract_session_from_phone
+    )(func)
 
-template_idempotent = functools.partial(
-    idempotent,
-    header="X-Template-Idempotency-Key",
-    ttl=300,  # 5 minutos
-    required=False,
-    extract_session_id=extract_session_from_phone
-)
+def template_idempotent(func):
+    """Decorator para templates com idempotência"""
+    return idempotent(
+        header="X-Template-Idempotency-Key",
+        ttl=300,  # 5 minutos
+        required=False,
+        extract_session_id=extract_session_from_phone
+    )(func)

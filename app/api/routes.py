@@ -69,7 +69,7 @@ async def webhook_whatsapp(message: WhatsAppMessage, request: Request):
             }
         }
         
-        resultado = grafo.invoke(estado_inicial, config=config)
+        resultado = await grafo.ainvoke(estado_inicial, config=config)
         execution_time = (time.time() - start_time) * 1000
         
         # Extrair resposta
@@ -87,7 +87,7 @@ async def webhook_whatsapp(message: WhatsAppMessage, request: Request):
         return WhatsAppResponse(
             success=True,
             message=resposta_usuario,
-            session_id=resultado.get("core", {}).get("session_id"),
+            session_id=getattr(resultado.get("core"), "session_id", None) if resultado.get("core") else None,
             next_action=proximo_no
         )
         

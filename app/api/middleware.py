@@ -6,7 +6,7 @@ import uuid
 from typing import Callable
 from fastapi import Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 
 from app.infra.logging import obter_logger

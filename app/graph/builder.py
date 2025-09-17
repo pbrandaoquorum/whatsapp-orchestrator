@@ -2,7 +2,7 @@
 Builder do grafo LangGraph - monta o grafo completo com todos os nós e edges
 """
 from typing import Dict, Any
-from langgraph import StateGraph, END
+from langgraph.graph import StateGraph, END
 # Checkpointer removido - estado gerenciado via DynamoDB
 
 from app.graph.state import GraphState

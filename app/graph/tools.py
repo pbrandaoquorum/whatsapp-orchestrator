@@ -13,7 +13,7 @@ from app.infra.logging import obter_logger, log_request, log_response
 from app.infra.timeutils import agora_br
 from app.infra.tpc import marcar_acao_executada
 from app.infra.circuit_breaker import circuit_breaker, LAMBDA_CIRCUIT_CONFIG, CircuitBreakerError
-from app.infra.cache import lambda_cache
+# from app.infra.cache import lambda_cache  # Módulo não encontrado
 
 logger = obter_logger(__name__)
 
@@ -118,7 +118,7 @@ async def fazer_requisicao_lambda(
 
 
 @circuit_breaker("lambda_get_schedule", LAMBDA_CIRCUIT_CONFIG)
-@lambda_cache(ttl=300)  # Cache por 5 minutos
+# @lambda_cache(ttl=300)  # Cache por 5 minutos - módulo não encontrado
 async def _executar_get_schedule_started(numero_telefone: str) -> Dict[str, Any]:
     """Executa chamada para getScheduleStarted com circuit breaker"""
     payload = {"phoneNumber": numero_telefone}

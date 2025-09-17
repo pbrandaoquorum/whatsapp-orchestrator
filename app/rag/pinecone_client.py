@@ -8,7 +8,7 @@ import pinecone
 from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 from app.infra.logging import obter_logger
-from app.infra.cache import rag_cache
+# from app.infra.cache import rag_cache  # Módulo não encontrado
 from app.infra.circuit_breaker import circuit_breaker, PINECONE_CIRCUIT_CONFIG, CircuitBreakerError
 
 logger = obter_logger(__name__)
@@ -119,7 +119,7 @@ def gerar_embedding(texto: str) -> List[float]:
         return []
 
 
-@rag_cache(ttl=3600)  # Cache por 1 hora
+# @rag_cache(ttl=3600)  # Cache por 1 hora - módulo não encontrado
 @circuit_breaker("pinecone_query", PINECONE_CIRCUIT_CONFIG)
 async def _executar_consulta_pinecone(embedding: List[float], k: int, limiar_score: float) -> List[Dict[str, Any]]:
     """Executa consulta no Pinecone com circuit breaker"""
