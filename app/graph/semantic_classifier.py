@@ -113,7 +113,17 @@ REGRAS IMPORTANTES:
 5. Confidence >= 0.7 para classificações específicas
 6. Confidence >= 0.9 para confirmações sim/não
 
-Responda APENAS com JSON válido no formato especificado.
+FORMATO DE RESPOSTA:
+Responda APENAS com JSON válido no seguinte formato exato:
+{
+  "intent": "uma_das_opcoes_acima",
+  "confidence": 0.85,
+  "rationale": "Explicação da classificação",
+  "vital_signs": {"PA": "120x80", "FC": 78} // apenas se sinais vitais detectados,
+  "clinical_note": "texto da nota" // apenas se nota clínica detectada
+}
+
+IMPORTANTE: Sempre inclua os campos "intent", "confidence" e "rationale".
 """.strip()
 
 
@@ -279,15 +289,26 @@ async def classificar_semanticamente(texto: str, estado: GraphState) -> Classifi
             tempo_ms=round(tempo_execucao, 2)
         )
         
-        # Converter para ClassificationResult
-        result = ClassificationResult(
-            intent=IntentType(resultado_raw["intent"]),
-            confidence=float(resultado_raw["confidence"]),
-            rationale=resultado_raw["rationale"],
-            vital_signs=resultado_raw.get("vital_signs"),
-            clinical_note=resultado_raw.get("clinical_note"),
-            metadata=resultado_raw.get("metadata")
-        )
+        # Converter para ClassificationResult com tratamento de erros
+        try:
+            # Verificar se campos obrigatórios existem
+            if "intent" not in resultado_raw:
+                logger.error("Campo 'intent' não encontrado na resposta do LLM", resposta=resultado_raw)
+                # Tentar parsing manual da resposta
+                resultado_raw = _parse_manual_response(resultado_raw)
+            
+            result = ClassificationResult(
+                intent=IntentType(resultado_raw["intent"]),
+                confidence=float(resultado_raw.get("confidence", 0.5)),
+                rationale=resultado_raw.get("rationale", "Classificação automática"),
+                vital_signs=resultado_raw.get("vital_signs"),
+                clinical_note=resultado_raw.get("clinical_note"),
+                metadata=resultado_raw.get("metadata")
+            )
+        except (KeyError, ValueError) as e:
+            logger.error("Erro ao processar resposta do LLM", erro=str(e), resposta=resultado_raw)
+            # Usar fallback com análise básica do texto
+            return _create_fallback_result(texto, estado)
         
         # Processar sinais vitais se detectados
         if result.vital_signs:
@@ -419,15 +440,77 @@ async def validar_com_judge(
         return resultado_original
 
 
+def _parse_manual_response(resultado_raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse manual da resposta quando JSON parser falha"""
+    import re
+    
+    # Se resultado_raw é string, tentar extrair JSON
+    if isinstance(resultado_raw, str):
+        # Procurar por padrões JSON
+        json_match = re.search(r'\{.*\}', resultado_raw, re.DOTALL)
+        if json_match:
+            try:
+                import json
+                return json.loads(json_match.group())
+            except:
+                pass
+    
+    # Fallback: criar resultado básico
+    return {
+        "intent": "indefinido",
+        "confidence": 0.3,
+        "rationale": "Parsing manual da resposta do LLM"
+    }
+
+def _create_fallback_result(texto: str, estado: GraphState) -> ClassificationResult:
+    """Cria resultado fallback baseado em análise básica do texto"""
+    texto_lower = texto.lower()
+    
+    # Análise básica por palavras-chave
+    if any(palavra in texto_lower for palavra in ['cheguei', 'chegando', 'presença', 'local']):
+        intent = IntentType.CONFIRMAR_PRESENCA
+        confidence = 0.7
+        rationale = "Detectado por palavras-chave de chegada"
+    elif any(palavra in texto_lower for palavra in ['pa ', 'pressão', 'fc ', 'frequência', 'saturação', 'temperatura']):
+        intent = IntentType.SINAIS_VITAIS
+        confidence = 0.7
+        rationale = "Detectado sinais vitais por palavras-chave"
+    elif any(palavra in texto_lower for palavra in ['paciente', 'consciente', 'orientad', 'quadro']):
+        intent = IntentType.NOTA_CLINICA
+        confidence = 0.7
+        rationale = "Detectado nota clínica por palavras-chave"
+    elif any(palavra in texto_lower for palavra in ['finalizar', 'terminar', 'encerrar', 'relatório']):
+        intent = IntentType.FINALIZAR_PLANTAO
+        confidence = 0.7
+        rationale = "Detectado finalização por palavras-chave"
+    elif any(palavra in texto_lower for palavra in ['cancelar', 'não posso', 'imprevisto']):
+        intent = IntentType.CANCELAR_PRESENCA
+        confidence = 0.7
+        rationale = "Detectado cancelamento por palavras-chave"
+    elif any(palavra in texto_lower for palavra in ['sim', 'confirmo', 'ok', 'pode ser']):
+        intent = IntentType.CONFIRMACAO_SIM
+        confidence = 0.6
+        rationale = "Detectado confirmação positiva"
+    elif any(palavra in texto_lower for palavra in ['não', 'negativo', 'cancelar']):
+        intent = IntentType.CONFIRMACAO_NAO
+        confidence = 0.6
+        rationale = "Detectado confirmação negativa"
+    else:
+        intent = IntentType.INDEFINIDO
+        confidence = 0.3
+        rationale = "Não foi possível classificar - usando fallback"
+    
+    return ClassificationResult(
+        intent=intent,
+        confidence=confidence,
+        rationale=rationale
+    )
+
 async def _fallback_classificacao_simples(texto: str, estado: GraphState) -> ClassificationResult:
     """
-    Fallback simples quando LLM não está disponível - apenas retorna indefinido
+    Fallback simples quando LLM não está disponível - análise por palavras-chave
     """
-    return ClassificationResult(
-        intent=IntentType.INDEFINIDO,
-        confidence=0.1,
-        rationale="LLM indisponível - não foi possível classificar sem análise semântica"
-    )
+    return _create_fallback_result(texto, estado)
 
 
 def mapear_intencao_para_fluxo(intent: IntentType) -> str:

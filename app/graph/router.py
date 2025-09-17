@@ -190,6 +190,17 @@ async def processar_classificacao_semantica(estado: GraphState) -> Optional[str]
         # Mapear intenção para fluxo
         fluxo = map_intent_to_flow(resultado.intent)
         
+        # Aplicar lógica contextual para confirmações
+        if resultado.intent == IntentType.CONFIRMACAO_SIM:
+            # Se não temos presença confirmada, esta é uma confirmação de presença
+            if not presenca_confirmada(estado):
+                fluxo = "escala"
+                logger.info("CONFIRMACAO_SIM mapeada para escala (confirmação de presença)")
+            else:
+                # Se já tem presença, pode ser confirmação de outro fluxo
+                fluxo = "auxiliar"
+                logger.info("CONFIRMACAO_SIM mapeada para auxiliar (presença já confirmada)")
+        
         # Atualizar estado do router
         estado.router.intencao = resultado.intent
         
@@ -241,13 +252,22 @@ def processar_sinais_vitais_semanticos(estado: GraphState, vital_signs: Dict[str
 def aplicar_gates_pos_classificacao(intencao: str, estado: GraphState) -> str:
     """Aplica gates de negócio após classificação LLM"""
     
-    # Gate 1: Turno cancelado ou não permitido
-    if estado.core.cancelado or not estado.core.turno_permitido:
-        if intencao not in ["auxiliar"]:
+    # Gate 1: Turno cancelado (mas permitir confirmação de presença)
+    if estado.core.cancelado:
+        if intencao not in ["auxiliar", "confirmar_presenca", "cancelar_presenca"]:
+            logger.info(
+                "Intenção bloqueada - turno cancelado",
+                intencao_original=intencao,
+                turno_cancelado=estado.core.cancelado
+            )
+            return "auxiliar"
+    
+    # Gate 1.5: Turno não permitido (mas permitir tentativas de confirmação)
+    if estado.core.turno_permitido is False:  # Explicitamente False, não None
+        if intencao not in ["auxiliar", "confirmar_presenca", "cancelar_presenca"]:
             logger.info(
                 "Intenção bloqueada - turno não permitido",
                 intencao_original=intencao,
-                turno_cancelado=estado.core.cancelado,
                 turno_permitido=estado.core.turno_permitido
             )
             return "auxiliar"
