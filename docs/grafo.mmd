@@ -1,0 +1,37 @@
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	router(router)
+	escala(escala)
+	clinical(clinical)
+	notas(notas)
+	finalizar(finalizar)
+	auxiliar(auxiliar)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> router;
+	auxiliar -. &nbsp;END&nbsp; .-> __end__;
+	auxiliar -.-> router;
+	clinical -. &nbsp;END&nbsp; .-> __end__;
+	clinical -.-> router;
+	escala -. &nbsp;END&nbsp; .-> __end__;
+	escala -.-> router;
+	finalizar -. &nbsp;END&nbsp; .-> __end__;
+	finalizar -.-> router;
+	notas -. &nbsp;END&nbsp; .-> __end__;
+	notas -.-> router;
+	router -.-> auxiliar;
+	router -.-> clinical;
+	router -.-> escala;
+	router -.-> finalizar;
+	router -.-> notas;
+	router -.-> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+
+```

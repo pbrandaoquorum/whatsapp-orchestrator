@@ -323,3 +323,52 @@ def limpar_cache_grafo():
     global _grafo_cache
     _grafo_cache = None
     logger.info("Cache do grafo limpo")
+
+
+def salvar_mermaid_do_grafo_compilado(grafo_compilado, caminho_arquivo: str) -> str:
+    """
+    Gera o diagrama Mermaid do grafo compilado e salva em um arquivo.
+    O arquivo é escrito com bloco cercado ```mermaid para fácil visualização em Markdown.
+
+    Args:
+        grafo_compilado: Resultado de `criar_grafo().compile()` (runnable do LangGraph)
+        caminho_arquivo: Caminho do arquivo de saída (ex.: "docs/grafo.mmd" ou "graph.md")
+
+    Returns:
+        Caminho do arquivo gerado
+    """
+    try:
+        # Obter representação Mermaid do grafo
+        mermaid_source = grafo_compilado.get_graph().draw_mermaid()
+
+        # Garantir diretório de saída
+        import os
+        diretorio = os.path.dirname(caminho_arquivo)
+        if diretorio:
+            os.makedirs(diretorio, exist_ok=True)
+
+        # Escrever com fence para Markdown
+        conteudo = f"""```mermaid
+{mermaid_source}
+```
+"""
+        with open(caminho_arquivo, "w", encoding="utf-8") as f:
+            f.write(conteudo)
+
+        logger.info("Mermaid do grafo salvo", arquivo=caminho_arquivo)
+        return caminho_arquivo
+    except Exception as e:
+        logger.error(f"Erro ao gerar Mermaid do grafo: {e}")
+        raise
+
+
+def salvar_mermaid_para_arquivo(caminho_arquivo: str) -> str:
+    """
+    Atalho que cria o grafo, compila e salva o Mermaid no caminho informado.
+
+    Uso:
+        from app.graph.builder import salvar_mermaid_para_arquivo
+        salvar_mermaid_para_arquivo("docs/grafo.mmd")
+    """
+    grafo_compilado = criar_grafo()
+    return salvar_mermaid_do_grafo_compilado(grafo_compilado, caminho_arquivo)
