@@ -13,6 +13,7 @@ from app.api.schemas import (
     ErrorResponse, SyncRequest, SyncResponse, SearchRequest, SearchResponse
 )
 from app.graph.builder import criar_grafo
+from app.infra.langfuse_integration import get_langfuse_callback_config
 from app.graph.state import GraphState
 from app.rag.pinecone_client import buscar_sintomas_similares, testar_conexao as testar_pinecone
 from app.rag.sheets_sync import sincronizar_com_pinecone, testar_conexao_sheets
@@ -62,11 +63,12 @@ async def webhook_whatsapp(message: WhatsAppMessage, request: Request):
         # Executar grafo com checkpointing
         start_time = time.time()
         
-        # Configuração para checkpointing
+        # Configuração para checkpointing + observabilidade Langfuse
         config = {
             "configurable": {
                 "thread_id": estado_inicial.core.session_id
-            }
+            },
+            **get_langfuse_callback_config()
         }
         
         resultado = await grafo.ainvoke(estado_inicial, config=config)
@@ -202,7 +204,7 @@ async def debug_grafo(debug_request: GraphDebugRequest, request: Request):
         grafo = criar_grafo()
         
         # Executar grafo LangGraph
-        resultado = grafo.invoke(estado_inicial)
+        resultado = grafo.invoke(estado_inicial, config=get_langfuse_callback_config())
         execution_time = (time.time() - start_time) * 1000
         
         return GraphDebugResponse(

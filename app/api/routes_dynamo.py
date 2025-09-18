@@ -13,6 +13,7 @@ from app.api.schemas import (
     HealthResponse, ReadinessResponse
 )
 from app.graph.builder import criar_grafo
+from app.infra.langfuse_integration import get_langfuse_callback_config
 from app.graph.state import GraphState
 from app.infra.state_persistence import get_state_manager, StateManager
 from app.infra.locks import acquire_session_lock
@@ -85,7 +86,7 @@ async def webhook_ingest(
             config = {"configurable": {"thread_id": session_id}}
             
             inicio = time.time()
-            resultado = grafo.invoke(estado, config=config)
+            resultado = grafo.invoke(estado, config={**config, **get_langfuse_callback_config()})
             tempo_execucao = (time.time() - inicio) * 1000
             
             # Extrair resposta

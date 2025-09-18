@@ -25,6 +25,7 @@ dependencies = [
     "boto3>=1.34.0",
     "moto[dynamodb]>=4.2.0",
     "ulid-py>=1.1.0",
+    "langfuse>=2.0.0",
 ]
 
 [build-system]
