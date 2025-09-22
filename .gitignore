@@ -169,3 +169,7 @@ htmlcov/
 
 # Pytest
 .pytest_cache/
+# env
+.env
+*.env
+!.env.example
