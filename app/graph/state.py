@@ -1,70 +1,109 @@
 """
-Estado canônico do grafo LangGraph com validação Pydantic v2
+GraphState - Estado unificado do sistema usando Pydantic v2
 """
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
 
 
-class CoreState(BaseModel):
-    """Estado central da sessão"""
-    session_id: Optional[str] = None
-    numero_telefone: Optional[str] = None
-    caregiver_id: Optional[str] = None
-    schedule_id: Optional[str] = None
-    patient_id: Optional[str] = None
-    report_id: Optional[str] = None
-    data_relatorio: Optional[str] = None
-    turno_permitido: Optional[bool] = None
-    turno_iniciado: Optional[bool] = None
-    empresa: Optional[str] = None
-    cooperativa: Optional[str] = None
-    cancelado: bool = False
-
-
-class VitalsState(BaseModel):
-    """Estado dos sinais vitais"""
-    processados: Dict[str, Any] = Field(default_factory=dict)  # {"PA":"120x80","FC":78,"FR":18,"Sat":97,"Temp":36.8}
-    faltantes: List[str] = Field(default_factory=list)
-
-
-class NoteState(BaseModel):
-    """Estado das notas clínicas"""
-    texto_bruto: Optional[str] = None
-    sintomas_rag: List[Dict[str, Any]] = Field(default_factory=list)  # SymptomReport[]
-
-
-class RouterState(BaseModel):
-    """Estado do roteador"""
-    intencao: Optional[str] = None  # escala | sinais_vitais | notas | finalizar | auxiliar
-    ultimo_fluxo: Optional[str] = None
-
-
-class AuxState(BaseModel):
-    """Estado auxiliar para retomada e coleta incremental"""
-    retomar_apos: Optional[Dict[str, Any]] = None   # {"flow":"finalizar","reason":"vitals_before_finish"}
-    ultima_pergunta: Optional[str] = None           # prompt pendente ao usuário
-    fluxo_que_perguntou: Optional[str] = None
-    buffers: Dict[str, Any] = Field(default_factory=dict)  # {"vitals": {...}}
-    acao_pendente: Optional[Dict[str, Any]] = None  # two-phase commit: payload + alvo + expiresAt
+class SymptomReport(BaseModel):
+    """Schema para relatório de sintomas"""
+    symptomDefinition: str
+    altNotepadMain: str
+    symptomCategory: str
+    symptomSubCategory: str
+    descricaoComparada: str
+    coeficienteSimilaridade: float
 
 
 class GraphState(BaseModel):
-    """Estado completo do grafo"""
-    core: CoreState = Field(default_factory=CoreState)
-    vitais: VitalsState = Field(default_factory=VitalsState)
-    nota: NoteState = Field(default_factory=NoteState)
-    router: RouterState = Field(default_factory=RouterState)
-    aux: AuxState = Field(default_factory=AuxState)
-    texto_usuario: Optional[str] = None
-    metadados: Dict[str, Any] = Field(default_factory=dict)  # flags: presenca_confirmada, sv_realizados, modo_finalizar, etc.
+    """Estado unificado do grafo - todos os nomes em PT-BR conforme especificado"""
     
-    # Campos para resposta
-    resposta_usuario: Optional[str] = None
-    proximo_no: Optional[str] = None
+    # Informações da sessão
+    sessao: Dict[str, Any] = Field(default_factory=lambda: {
+        "session_id": None,
+        "telefone": None,
+        "caregiver_id": None,
+        "schedule_id": None,
+        "patient_id": None,
+        "report_id": None,
+        "data_relatorio": None,
+        "turno_permitido": None,
+        "turno_iniciado": None,
+        "empresa": None,
+        "cooperativa": None,
+        "cancelado": False
+    })
     
-    # Controle do fluxo do grafo
-    terminar_fluxo: bool = False  # Marca se deve terminar o grafo
-    continuar_fluxo: bool = False  # Marca se deve continuar no router
+    # Entrada do usuário
+    entrada: Dict[str, Any] = Field(default_factory=lambda: {
+        "texto_usuario": None,
+        "meta": {}
+    })
     
-    # Controle de versão para OCC (Optimistic Concurrency Control)
-    version: int = Field(default=0, description="Versão do estado para controle de concorrência")
+    # Resultado do roteador
+    roteador: Dict[str, Any] = Field(default_factory=lambda: {
+        "intencao": None,
+        "subintencao_clinico": None
+    })
+    
+    # Dados clínicos
+    clinico: Dict[str, Any] = Field(default_factory=lambda: {
+        "vitais": {},  # {"PA":"120x80","FC":78,"FR":18,"Sat":97,"Temp":36.8}
+        "faltantes": [],  # ["FR","Sat"]
+        "nota": None,  # texto livre
+        "sintomas": []  # List[SymptomReport] (serialize)
+    })
+    
+    # Estado de retomada
+    retomada: Optional[Dict[str, Any]] = None  # {"fluxo":"finalizar","motivo":"precisa_vitais"}
+    
+    # Estado pendente (two-phase commit)
+    pendente: Optional[Dict[str, Any]] = None  # {"fluxo":"clinico","payload":{...}}
+    
+    # Histórico de fluxos executados
+    fluxos_executados: List[str] = Field(default_factory=list)
+    
+    # Resposta final do fiscal
+    resposta_fiscal: Optional[str] = None
+    
+    # Metadados adicionais
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+    def __str__(self) -> str:
+        """Representação string para logs"""
+        return f"GraphState(session_id={self.sessao.get('session_id')}, intencao={self.roteador.get('intencao')}, fluxos={len(self.fluxos_executados)})"
+    
+    def get_vitais_completos(self) -> bool:
+        """Verifica se todos os sinais vitais estão presentes"""
+        vitais = self.clinico["vitais"]
+        campos_obrigatorios = ["PA", "FC", "FR", "Sat", "Temp"]
+        return all(
+            vitais.get(campo) is not None and vitais.get(campo) != "" 
+            for campo in campos_obrigatorios
+        )
+    
+    def get_vitais_faltantes(self) -> List[str]:
+        """Retorna lista de vitais em falta"""
+        vitais = self.clinico["vitais"]
+        campos_obrigatorios = ["PA", "FC", "FR", "Sat", "Temp"]
+        return [
+            campo for campo in campos_obrigatorios 
+            if not vitais.get(campo) or vitais.get(campo) == ""
+        ]
+    
+    def limpar_pendente(self):
+        """Limpa estado pendente após confirmação"""
+        self.pendente = None
+    
+    def adicionar_fluxo_executado(self, fluxo: str):
+        """Adiciona fluxo à lista de executados"""
+        if fluxo not in self.fluxos_executados:
+            self.fluxos_executados.append(fluxo)
+    
+    def tem_retomada(self) -> bool:
+        """Verifica se há estado de retomada"""
+        return self.retomada is not None
+    
+    def tem_pendente(self) -> bool:
+        """Verifica se há ação pendente"""
+        return self.pendente is not None

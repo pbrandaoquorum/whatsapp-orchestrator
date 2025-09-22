@@ -1,0 +1,267 @@
+{
+  "scenarios": {
+    "vital_signs_note_symptoms": {
+      "description": "Cenário 1: Sinais Vitais + NoteReport + SymptomReport",
+      "payload": {
+        "reportID": "report-123",
+        "reportDate": "2024-01-15",
+        "scheduleID": "schedule-456",
+        "noteDescAI": "Paciente apresentou melhora nos sintomas durante a aferição dos sinais vitais. FC e PA estáveis.",
+        "vitalSignsData": {
+          "heartRate": 72,
+          "respRate": 16,
+          "saturationO2": 98,
+          "bloodPressure": "120x80",
+          "temperature": 36.5,
+          "caregiverIdentifier": "caregiver-789",
+          "patientIdentifier": "patient-101",
+          "consciousness": "Alerta",
+          "supplementaryOxygen": "Não",
+          "oxygenConcentrator": false,
+          "oxygenVolume": 0
+        },
+        "SymptomReport": [
+          {
+            "altNotepadMain": "Dor de cabeça leve",
+            "symptomCategory": "Neurológico",
+            "symptomSubCategory": "Cefaleia",
+            "symptomDefinition": "Cefaleia leve"
+          },
+          {
+            "altNotepadMain": "Náusea ocasional",
+            "symptomCategory": "Digestivo",
+            "symptomSubCategory": "Mal-estar",
+            "symptomDefinition": "Náusea leve"
+          }
+        ],
+        "regras": [
+          {
+            "sintoma": "Cefaleia leve",
+            "pontuacao": 2,
+            "freq": "Sim"
+          },
+          {
+            "sintoma": "Náusea leve",
+            "pontuacao": 3,
+            "freq": "Não"
+          }
+        ]
+      }
+    },
+
+    "vital_signs_note": {
+      "description": "Cenário 2: Sinais Vitais + NoteReport (sem SymptomReport)",
+      "payload": {
+        "reportID": "report-124",
+        "reportDate": "2024-01-15",
+        "scheduleID": "schedule-457",
+        "noteDescAI": "Aferição de sinais vitais realizada sem intercorrências. Paciente colaborativo.",
+        "vitalSignsData": {
+          "heartRate": 68,
+          "respRate": 14,
+          "saturationO2": 99,
+          "bloodPressure": "118x75",
+          "temperature": 36.2,
+          "caregiverIdentifier": "caregiver-790",
+          "patientIdentifier": "patient-102",
+          "consciousness": "Alerta",
+          "supplementaryOxygen": "Não",
+          "oxygenConcentrator": false,
+          "oxygenVolume": 0
+        }
+      }
+    },
+
+    "note_symptoms": {
+      "description": "Cenário 3: NoteReport + SymptomReport (sem sinais vitais)",
+      "payload": {
+        "reportID": "report-125",
+        "reportDate": "2024-01-15",
+        "scheduleID": "schedule-458",
+        "noteDescAI": "Paciente relatou alguns sintomas durante o plantão. Observação contínua necessária.",
+        "SymptomReport": [
+          {
+            "altNotepadMain": "Dor abdominal",
+            "symptomCategory": "Digestivo",
+            "symptomSubCategory": "Dor",
+            "symptomDefinition": "Dor abdominal moderada"
+          },
+          {
+            "altNotepadMain": "Tontura ao levantar",
+            "symptomCategory": "Neurológico",
+            "symptomSubCategory": "Vertigem",
+            "symptomDefinition": "Tontura postural"
+          }
+        ],
+        "regras": [
+          {
+            "sintoma": "Dor abdominal moderada",
+            "pontuacao": 4,
+            "freq": "Não"
+          },
+          {
+            "sintoma": "Tontura postural",
+            "pontuacao": 2,
+            "freq": "Sim"
+          }
+        ]
+      }
+    },
+
+    "note_only": {
+      "description": "Cenário 4: NoteReport apenas",
+      "payload": {
+        "reportID": "report-126",
+        "reportDate": "2024-01-15",
+        "scheduleID": "schedule-459",
+        "noteDescAI": "Plantão transcorreu sem intercorrências. Paciente estável e sem queixas. Administração de medicamentos conforme prescrição."
+      }
+    },
+
+    "family_report": {
+      "description": "Fluxo da Família: NoteReport + SymptomReport via telefone",
+      "payload": {
+        "phoneNumber": "+5511999999999",
+        "noteDescAI": "Familiar reportou melhora significativa do paciente. Menos queixas de dor e mais disposição.",
+        "SymptomReport": [
+          {
+            "altNotepadMain": "Melhora da dor",
+            "symptomCategory": "Dor",
+            "symptomSubCategory": "Redução",
+            "symptomDefinition": "Alívio da dor"
+          }
+        ],
+        "regras": [
+          {
+            "sintoma": "Alívio da dor",
+            "pontuacao": 1,
+            "freq": "Não"
+          }
+        ]
+      }
+    },
+
+    "high_score_symptoms": {
+      "description": "Teste de alerta: Sintomas com score alto",
+      "payload": {
+        "reportID": "report-127",
+        "reportDate": "2024-01-15",
+        "scheduleID": "schedule-460",
+        "noteDescAI": "Paciente apresentou sintomas preocupantes que requerem atenção médica.",
+        "SymptomReport": [
+          {
+            "altNotepadMain": "Dor torácica intensa",
+            "symptomCategory": "Cardiovascular",
+            "symptomSubCategory": "Dor",
+            "symptomDefinition": "Dor torácica severa"
+          },
+          {
+            "altNotepadMain": "Falta de ar",
+            "symptomCategory": "Respiratório",
+            "symptomSubCategory": "Dispneia",
+            "symptomDefinition": "Dispneia moderada"
+          }
+        ],
+        "regras": [
+          {
+            "sintoma": "Dor torácica severa",
+            "pontuacao": 5,
+            "freq": "Não"
+          },
+          {
+            "sintoma": "Dispneia moderada",
+            "pontuacao": 4,
+            "freq": "Não"
+          }
+        ]
+      }
+    },
+
+    "vital_signs_with_alerts": {
+      "description": "Cenário completo: Sinais vitais críticos + sintomas (1 recorrente, 1 não) + nota",
+      "payload": {
+        "reportID": "report-128",
+        "reportDate": "2024-01-15",
+        "scheduleID": "schedule-461",
+        "noteDescAI": "Paciente com FC elevada e alguns sintomas durante o plantão. Monitoramento contínuo necessário.",
+        "vitalSignsData": {
+          "heartRate": 160,
+          "respRate": 16,
+          "saturationO2": 98,
+          "bloodPressure": "120x80",
+          "temperature": 38.2,
+          "caregiverIdentifier": "caregiver-test",
+          "patientIdentifier": "patient-test",
+          "consciousness": "Alerta",
+          "supplementaryOxygen": "Não",
+          "oxygenConcentrator": false,
+          "oxygenVolume": 0,
+          "SymptomReport": [
+            {
+              "altNotepadMain": "Dor de cabeça moderada",
+              "symptomCategory": "Neurológico",
+              "symptomSubCategory": "Cefaleia",
+              "symptomDefinition": "Cefaleia moderada"
+            },
+            {
+              "altNotepadMain": "Náusea",
+              "symptomCategory": "Digestivo",
+              "symptomSubCategory": "Mal-estar",
+              "symptomDefinition": "Náusea leve"
+            }
+          ]
+        },
+        "regras": [
+          {
+            "sintoma": "Cefaleia moderada",
+            "pontuacao": 3,
+            "freq": "Sim"
+          },
+          {
+            "sintoma": "Náusea leve",
+            "pontuacao": 2,
+            "freq": "Não"
+          }
+        ]
+      }
+    },
+
+    "extreme_z_score_scenario": {
+      "description": "Teste completo: Z-score extremo + mudança de risco + todos os tipos de alerta",
+      "payload": {
+        "reportID": "report-129",
+        "reportDate": "2024-01-15",
+        "scheduleID": "schedule-462",
+        "noteDescAI": "Paciente com alteração súbita nos sinais vitais em relação ao padrão histórico.",
+        "vitalSignsData": {
+          "heartRate": 45,
+          "respRate": 8,
+          "saturationO2": 85,
+          "bloodPressure": "200x110",
+          "temperature": 38.5,
+          "caregiverIdentifier": "caregiver-test",
+          "patientIdentifier": "patient-test",
+          "consciousness": "Alerta",
+          "supplementaryOxygen": "Sim",
+          "oxygenConcentrator": true,
+          "oxygenVolume": 2,
+          "SymptomReport": [
+            {
+              "altNotepadMain": "Tontura intensa",
+              "symptomCategory": "Neurológico",
+              "symptomSubCategory": "Vertigem",
+              "symptomDefinition": "Tontura severa"
+            }
+          ]
+        },
+        "regras": [
+          {
+            "sintoma": "Tontura severa",
+            "pontuacao": 5,
+            "freq": "Não"
+          }
+        ]
+      }
+    }
+  }
+}

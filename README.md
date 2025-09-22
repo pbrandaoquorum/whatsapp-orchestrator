@@ -1,686 +1,365 @@
 # WhatsApp Orchestrator
 
-Sistema **FastAPI + LangGraph** para orquestração de fluxos WhatsApp em plantões domiciliares. Utiliza **100% classificação semântica via LLM (GPT-4o-mini)** com **LLM as a Judge**, removendo completamente regex e keywords do código. Usa **DynamoDB** para persistência de estado com **OCC (Optimistic Concurrency Control)**, **locks distribuídos**, **idempotência** e **two-phase commit** para todas as ações críticas.
+Sistema de orquestração de fluxos WhatsApp usando **Python + FastAPI + LangGraph**, com persistência em **DynamoDB** e processamento determinístico.
 
-## 🏗️ Arquitetura
+## 🚀 Características
 
-### Componentes Principais
+- **Determinismo primeiro**: LLM apenas para classificar intenção e extrair dados clínicos (temp=0, JSON estrito)
+- **Persistência DynamoDB**: Estado canônico sem Redis
+- **Handlers síncronos**: Sem async/await
+- **Subgrafos especializados**: router → {escala, clinico, operacional, finalizar, auxiliar} → fiscal
+- **Two-phase commit**: Confirmações obrigatórias em escala, clínico e finalizar
+- **Extração via LLM**: Sem regex para vitais, usando LLM estruturado
+- **Sistema RAG**: Google Sheets + Pinecone para identificação de sintomas
 
-- **FastAPI**: API REST para receber mensagens e enviar respostas
-- **LangGraph**: Orquestração de fluxos com estado persistente
-- **DynamoDB**: Persistência de estado com OCC, locks distribuídos e idempotência
-- **Classificador Semântico**: 100% LLM (GPT-4o-mini) + LLM as a Judge - SEM regex/keywords
-- **Router Determinístico**: State machine explícita com gates de negócio
-- **Circuit Breaker**: Proteção contra falhas de LLM e Lambda
-- **Two-Phase Commit**: Confirmação obrigatória para ações críticas
-- **4 Lambdas AWS**: Integração com sistema existente via HTTP
-- **Pinecone**: RAG para identificação de sintomas
-- **Google Sheets**: Base de dados de sintomas
+## 📁 Estrutura do Projeto
 
-### Fluxos Implementados
+```
+.
+├─ app/
+│  ├─ api/
+│  │  ├─ main.py                  # FastAPI (rotas síncronas)
+│  │  └─ deps.py                  # configurações e dependências
+│  ├─ graph/
+│  │  ├─ state.py                 # GraphState (Pydantic v2)
+│  │  ├─ router.py                # roteador determinístico + LLM
+│  │  ├─ clinical_extractor.py    # orquestrador extração clínica
+│  │  ├─ rag.py                   # integração Pinecone + Google Sheets
+│  │  ├─ fiscal.py                # consolidador de resposta final
+│  │  └─ subgraphs/
+│  │     ├─ escala.py
+│  │     ├─ clinico.py
+│  │     ├─ operacional.py
+│  │     ├─ finalizar.py
+│  │     └─ auxiliar.py
+│  ├─ infra/
+│  │  ├─ dynamo_state.py          # persistência DynamoDB
+│  │  ├─ http.py                  # cliente HTTP síncrono
+│  │  └─ logging.py               # structlog PT-BR
+│  └─ llm/
+│     ├─ classifier.py            # classificador de intenção
+│     └─ extractor.py             # extrator de vitais/nota
+├─ tests/
+├─ .env.example
+├─ pyproject.toml
+├─ Makefile
+└─ README.md
+```
 
-1. **Escala**: Confirmação/cancelamento de presença
-2. **Clinical**: Coleta de sinais vitais e dados clínicos  
-3. **Notas**: Notas clínicas com identificação de sintomas via RAG
-4. **Finalizar**: Encerramento do plantão com relatório
-5. **Auxiliar**: Orientações e esclarecimentos
+## ⚙️ Instalação
 
-## 🚀 Instalação e Configuração
-
-### Pré-requisitos
-
-- Python 3.11+
-- AWS Account com DynamoDB
-- Conta OpenAI (obrigatório para classificação semântica)
-- Conta Pinecone (para RAG - opcional)
-- Conta Google Cloud (para Sheets - opcional)
-
-### Instalação
+### 1. Clone o repositório
 
 ```bash
-# Clonar repositório
-git clone <repo-url>
+git clone <url-do-repositorio>
 cd whatsapp-orchestrator
-
-# Instalar dependências
-pip install -e .
-
-# Copiar configurações
-cp env.example .env
 ```
 
-### Configuração (.env)
+### 2. Instale as dependências
+
+**Opção A: usando Make**
+```bash
+make setup
+```
+
+**Opção B: manual**
+```bash
+pip install -e .
+# ou para desenvolvimento:
+pip install -e .[dev]
+```
+
+### 3. Configure variáveis de ambiente
 
 ```bash
-# AWS Configuration (OBRIGATÓRIO)
+cp .env.example .env
+# Edite o arquivo .env com suas configurações
+```
+
+## 🔧 Configuração
+
+### Variáveis de Ambiente Obrigatórias
+
+```env
+# OpenAI (para classificação e extração)
+OPENAI_API_KEY=sk-seu-openai-api-key
+INTENT_MODEL=gpt-4o-mini
+EXTRACTOR_MODEL=gpt-4o-mini
+
+# AWS & Lambdas
 AWS_REGION=sa-east-1
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_ACCESS_KEY_ID=seu-aws-key
+AWS_SECRET_ACCESS_KEY=seu-aws-secret
+LAMBDA_GET_SCHEDULE=https://sua-url.../getScheduleStarted
+LAMBDA_UPDATE_CLINICAL=https://sua-url.../updateClinicalData
 
-# DynamoDB Tables
-DDB_TABLE_SESSIONS=OrchestratorSessions
-DDB_TABLE_PENDING_ACTIONS=PendingActions
-DDB_TABLE_CONV_BUFFER=ConversationBuffer
-DDB_TABLE_LOCKS=Locks
-DDB_TABLE_IDEMPOTENCY=Idempotency
-
-# OpenAI (OBRIGATÓRIO para classificação semântica)
-OPENAI_API_KEY=your_openai_api_key
-
-# Lambdas AWS (OBRIGATÓRIO para integração)
-LAMBDA_GET_SCHEDULE=https://your-lambda.execute-api.sa-east-1.amazonaws.com/default/getScheduleStarted
-LAMBDA_UPDATE_SCHEDULE=https://your-lambda.execute-api.sa-east-1.amazonaws.com/default/updateWorkScheduleResponse
-LAMBDA_UPDATE_CLINICAL=https://your-lambda.execute-api.sa-east-1.amazonaws.com/Prod/updateClinicalData
-LAMBDA_UPDATE_SUMMARY=https://your-lambda.execute-api.sa-east-1.amazonaws.com/default/updateReportSummaryAD
-
-# Pinecone (OPCIONAL para RAG)
-PINECONE_API_KEY=your_pinecone_api_key
-PINECONE_ENV=your_pinecone_environment  
-PINECONE_INDEX=sintomas-index
-
-# Google Sheets (OPCIONAL)
-GOOGLE_SHEETS_ID=your_google_sheets_id
-GOOGLE_SERVICE_ACCOUNT_JSON=path/to/service-account.json
-
-# TTL Configuration
-SESSION_TTL_DAYS=7
-BUFFER_TTL_DAYS=7
-IDEMPOTENCY_TTL_SECONDS=600
-LOCK_TTL_SECONDS=10
-
-# Configurações
-LOG_LEVEL=INFO
-TIMEOUT_LAMBDAS=30
-MAX_RETRIES=3
+# DynamoDB
+DYNAMODB_TABLE_CONVERSAS=Conversas
 ```
 
-### Setup Completo
+### Variáveis Opcionais (RAG)
+
+```env
+# Pinecone (para RAG de sintomas)
+PINECONE_API_KEY=seu-pinecone-api-key
+PINECONE_ENVIRONMENT=seu-ambiente
+PINECONE_INDEX=seu-indice
+
+# Google Sheets (base de sintomas)
+GOOGLE_SHEETS_ID=seu-google-sheets-id
+GOOGLE_CREDENTIALS_PATH=credentials/google-credentials.json
+```
+
+### DynamoDB - Tabela de Estado
+
+Crie a tabela `Conversas` no DynamoDB:
+
+- **Partition Key**: `session_id` (String)
+- **Attributes**: 
+  - `estado` (Binary) → GraphState serializado
+  - `atualizadoEm` (String) → timestamp ISO
+
+## 🏃 Execução
+
+### Desenvolvimento
 
 ```bash
-# 1. Instalar dependências
-pip install -e .
-
-# 2. Configurar .env
-cp env.example .env
-# Editar .env com suas credenciais AWS, OpenAI e Lambdas
-
-# 3. Criar tabelas DynamoDB
-python scripts/create_dynamo_tables.py
-
-# 4. Executar testes
-pytest tests/test_dynamo_store.py -v
-
-# 5. Executar aplicação
-uvicorn app.api.main:app --reload
-
-# 6. Testar endpoint
-curl -X POST http://localhost:8000/webhook/ingest \
-  -H "Content-Type: application/json" \
-  -H "X-Idempotency-Key: test-123" \
-  -d '{"message_id":"test","phoneNumber":"+5511999999999","text":"cheguei"}'
+make run
+# ou
+uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## 📡 API Endpoints
+### Produção
 
-### Webhook Principal (DynamoDB)
+```bash
+make run-prod
+# ou
+uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+```
 
-```http
-POST /webhook/ingest
-Content-Type: application/json
-X-Idempotency-Key: unique-key-123
+### Verificação de Saúde
 
+```bash
+# Health check
+curl http://localhost:8000/healthz
+
+# Readiness check (valida configurações)
+curl http://localhost:8000/readyz
+```
+
+## 📡 API
+
+### POST /webhook/whatsapp
+
+Webhook principal para mensagens do WhatsApp.
+
+**Request:**
+```json
 {
-  "message_id": "msg_123456",
-  "phoneNumber": "+5511999999999", 
-  "text": "cheguei, confirmo presença",
+  "message_id": "abc123",
+  "phoneNumber": "5511999999999", 
+  "text": "PA 120x80 FC 75 FR 18",
   "meta": {}
 }
 ```
 
-**Resposta:**
+**Response:**
 ```json
 {
-  "success": true,
-  "message": "✅ Presença confirmada! Agora você pode informar sinais vitais...",
-  "session_id": "session_5511999999999",
-  "next_action": "clinical"
+  "reply": "Salvei seus vitais (PA 120x80, FC 75, FR 18). Faltam: Sat, Temp para finalizar.",
+  "session_id": "5511999999999",
+  "status": "success"
 }
 ```
 
-### Notificação de Template (DynamoDB)
+## 🔄 Fluxos Suportados
 
-```http
-POST /hooks/template-fired
-Content-Type: application/json
-X-Template-Idempotency-Key: template-456
-
-{
-  "phoneNumber": "+5511999999999",
-  "template": "confirmar_presenca",
-  "metadata": {
-    "hint_campos_faltantes": ["FR","Sat","Temp"],
-    "shiftDay": "2025-01-15"
-  }
-}
+### 1. Escala (com confirmação)
 ```
-
-### Outros Endpoints
-
-- `GET /healthz` - Health check básico
-- `GET /readyz` - Readiness check com DynamoDB
-- `GET /sessions/{session_id}/state` - Debug: estado da sessão
-- `GET /sessions/{session_id}/conversation` - Debug: histórico
-- `GET /debug/dynamo/tables` - Status das tabelas DynamoDB
-- `GET /metrics/sessions` - Métricas das sessões
-
-## 🧠 Como Funciona
-
-### 1. **100% Classificação Semântica**
-- **REMOVIDO**: Regex e keywords do código
-- **ADICIONADO**: LLM semântico para TUDO (confirmações, sinais vitais, notas)
-- **Mantido**: Keywords apenas nos prompts como few-shot examples
-
-### 2. Ciclo de Vida da Mensagem (DynamoDB)
-
-```
-Mensagem WhatsApp → FastAPI → Idempotência → Lock Sessão → DynamoDB Load → LangGraph → Router → LLM Semântico → Fluxo → Lambda → DynamoDB Save → Resposta
-```
-
-### 3. Persistência e Concorrência
-
-- **Estado de Sessão**: DynamoDB com OCC (Optimistic Concurrency Control)
-- **Locks Distribuídos**: Previne processamento concorrente da mesma sessão
-- **Two-Phase Commit**: Confirmação obrigatória antes de executar ações críticas
-- **Idempotência**: Headers X-Idempotency-Key previnem reprocessamento
-- **Memória de Conversa**: Buffer temporal no DynamoDB com TTL automático
-
-### 2. Router Determinístico
-
-O router segue esta **ordem de prioridade**:
-
-1. **Bootstrap da sessão** (se necessário)
-2. **Retomada pendente** (`aux.retomar_apos`)  
-3. **Pergunta pendente** (two-phase commit ou coleta incremental)
-4. **Detecção determinística** de sinais vitais no texto
-5. **Fallback LLM** (temperatura 0, JSON estruturado)
-6. **Gates de negócio** (presença, sinais vitais, turno cancelado)
-
-### 3. Two-Phase Commit
-
-**Todas** as ações que chamam Lambdas usam confirmação:
-
-```
-Ação → Staging → "Confirma X? (sim/não)" → Commit/Cancel
-```
-
-**Exemplo:**
-```
-Usuário: "cheguei"
-Sistema: "Confirma presença no plantão de 15/01 às 14h? (sim/não)"  
+Usuário: "confirmo presença"
+Sistema: "Confirma sua presença no plantão?"
 Usuário: "sim"
-Sistema: ✅ Presença confirmada! [chama Lambda]
+Sistema: "Presença confirmada. O que mais deseja fazer?"
 ```
 
-### 4. Coleta Incremental
-
-Sinais vitais podem ser enviados **aos poucos**:
-
+### 2. Clínico (com confirmação)
 ```
-Usuário: "PA 120x80"
-Sistema: "Coletado PA. Ainda faltam: FC, FR, Sat, Temp"
-
-Usuário: "FC 78, Sat 97%"  
-Sistema: "Coletados FC e Sat. Ainda faltam: FR, Temp"
-
-Usuário: "FR 18, Temp 36.8"
-Sistema: "Todos os sinais coletados! Confirma salvar?"
+Usuário: "PA 120x80 FC 75 paciente com tosse"
+Sistema: "Confirma salvar: Vitais: PA 120x80, FC 75; Nota: paciente com tosse; Sintomas identificados: 1"
+Usuário: "sim"  
+Sistema: "Dados clínicos salvos com sucesso!"
 ```
 
-## 🔄 Fluxos Detalhados
-
-### Fluxo de Confirmação (Escala)
-
-```mermaid
-graph TD
-    A[Detectar intenção] --> B{Confirmar/Cancelar?}
-    B -->|Confirmar| C[Staging: confirmar presença]
-    B -->|Cancelar| D[Staging: cancelar presença]  
-    C --> E[Pergunta: "Confirma presença?"]
-    D --> F[Pergunta: "Confirma cancelamento?"]
-    E --> G{Resposta}
-    F --> G
-    G -->|Sim| H[Commit: Lambda updateWorkScheduleResponse]
-    G -->|Não| I[Cancel: voltar ao início]
-    H --> J[Atualizar metadados + re-bootstrap]
+### 3. Operacional (direto, sem confirmação)
+```
+Usuário: "Paciente dormindo tranquilo"
+Sistema: "Nota administrativa registrada: 'Paciente dormindo tranquilo'"
 ```
 
-### Fluxo Clínico (Sinais Vitais)
-
-```mermaid
-graph TD
-    A[Extrair sinais vitais] --> B{Todos coletados?}
-    B -->|Não| C[Solicitar faltantes]
-    B -->|Sim| D[Staging: salvar dados]
-    C --> E[Coleta incremental]
-    E --> A
-    D --> F[Pergunta: "Confirma salvar dados?"]
-    F --> G{Resposta}
-    G -->|Sim| H[Commit: Lambda updateClinicalData]
-    G -->|Não| I[Cancel: continuar coletando]
-    H --> J[Marcar SV realizados]
+### 4. Finalizar (com confirmação)
+```
+Usuário: "finalizar plantão"
+Sistema: "Confirma a finalização do plantão? Todos os dados serão enviados."
+Usuário: "sim"
+Sistema: "Plantão finalizado com sucesso! Obrigado pelo seu trabalho."
 ```
 
-### Fluxo de Finalização
-
-```mermaid
-graph TD
-    A[Validar pré-requisitos] --> B{Presença + SV OK?}
-    B -->|Não| C[Orientar sobre faltantes]
-    B -->|Sim| D[Montar dados do relatório]
-    D --> E[Staging: finalizar plantão]
-    E --> F[Pergunta: "Confirma finalizar?"]
-    F --> G{Resposta}
-    G -->|Sim| H[Commit: Lambda updatereportsummaryad]
-    G -->|Não| I[Cancel: continuar plantão]
-    H --> J[Plantão finalizado + DailyReport]
+### 5. Auxiliar
 ```
-
-## 🧪 RAG e Identificação de Sintomas
-
-### Google Sheets → Pinecone
-
-1. **Planilha** com colunas: `sintoma`, `pontuacao`, `categoria`, `subcategoria`
-2. **Sincronização** via `POST /rag/sync`
-3. **Embeddings** com SentenceTransformers (multilingual)
-4. **Busca** por similaridade com limiar configurável
-
-### Formato SymptomReport
-
-```json
-{
-  "symptomDefinition": "dor de cabeça",
-  "altNotepadMain": "cefaleia",
-  "symptomCategory": "Neurológico", 
-  "symptomSubCategory": "Dor",
-  "descricaoComparada": "dor de cabeça intensa",
-  "coeficienteSimilaridade": 0.85
-}
-```
-
-## 🔧 Cenários do updateClinicalData
-
-O Lambda recebe **7 cenários** diferentes:
-
-1. `VITAL_SIGNS_NOTE_SYMPTOMS` - SV + nota + sintomas
-2. `VITAL_SIGNS_SYMPTOMS` - SV + sintomas (sem nota)
-3. `VITAL_SIGNS_NOTE` - SV + nota (sem sintomas)  
-4. `VITAL_SIGNS_ONLY` - Apenas SV
-5. `NOTE_SYMPTOMS` - Nota + sintomas (sem SV)
-6. `SYMPTOMS_ONLY` - Apenas sintomas
-7. `NOTE_ONLY` - Apenas nota
-
-## 📊 Exemplos de Uso
-
-### Happy Path Completo
-
-```bash
-# 1. Confirmação de presença
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message_id": "msg_001",
-    "phoneNumber": "+5511999999999",
-    "text": "cheguei, confirmo presença"
-  }'
-
-# Resposta: "Confirma presença no plantão? (sim/não)"
-
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message_id": "msg_002", 
-    "phoneNumber": "+5511999999999",
-    "text": "sim"
-  }'
-
-# Resposta: "✅ Presença confirmada! Agora você pode informar sinais vitais..."
-
-# 2. Sinais vitais
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message_id": "msg_003",
-    "phoneNumber": "+5511999999999", 
-    "text": "PA 120x80, FC 78, FR 18, Sat 97%, Temp 36.5°C"
-  }'
-
-# Resposta: "Confirma salvar estes sinais vitais? PA: 120x80, FC: 78 bpm..."
-
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message_id": "msg_004",
-    "phoneNumber": "+5511999999999",
-    "text": "sim"
-  }'
-
-# Resposta: "✅ Dados salvos! Você pode finalizar o plantão..."
-
-# 3. Finalização  
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message_id": "msg_005",
-    "phoneNumber": "+5511999999999",
-    "text": "finalizar"
-  }'
-
-# Resposta: "Confirma finalizar plantão? Relatório: report_123..."
-```
-
-### Retomada de Contexto
-
-```bash
-# Usuário tenta finalizar sem sinais vitais
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message_id": "msg_006",
-    "phoneNumber": "+5511999999999", 
-    "text": "quero finalizar"
-  }'
-
-# Sistema: "Para finalizar, você precisa informar sinais vitais primeiro..."
-
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message_id": "msg_007",
-    "phoneNumber": "+5511999999999",
-    "text": "PA 130x85, FC 82, FR 16, Sat 98%, Temp 36.2°C"
-  }'
-
-# Sistema salva SV e automaticamente retoma finalização
-# "✅ Sinais vitais salvos! Agora vamos finalizar o plantão..."
-```
-
-### Coleta Incremental
-
-```bash
-# Sinais vitais enviados aos poucos
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -d '{"message_id": "msg_008", "phoneNumber": "+5511999999999", "text": "PA 120x80"}'
-
-# Resposta: "Coletado PA. Ainda faltam: FC, FR, Sat, Temp"
-
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -d '{"message_id": "msg_009", "phoneNumber": "+5511999999999", "text": "FC 78, Sat 97%"}'
-
-# Resposta: "Coletados FC e Sat. Ainda faltam: FR, Temp"
-
-curl -X POST http://localhost:8000/webhook/whatsapp \
-  -d '{"message_id": "msg_010", "phoneNumber": "+5511999999999", "text": "FR 18, Temp 36.8"}'
-
-# Resposta: "Todos os sinais coletados! Confirma salvar? PA: 120x80, FC: 78 bpm..."
+Usuário: "ajuda"
+Sistema: "Posso ajudar você com: [instruções detalhadas]"
 ```
 
 ## 🧪 Testes
 
-### Executar Testes
-
 ```bash
-# Todos os testes
-pytest
+# Executar todos os testes
+make test
+# ou
+pytest tests/ -v
 
-# Testes específicos  
-pytest tests/test_clinical_extractor.py
-pytest tests/test_router.py
-pytest tests/test_confirm.py
+# Teste específico
+pytest tests/test_router.py -v
 
-# Com cobertura
-pytest --cov=app --cov-report=html
-
-# Apenas testes rápidos (sem integração)
-pytest -m "not integration and not slow"
+# Com coverage
+pytest tests/ --cov=app --cov-report=html
 ```
 
-### Testes Implementados
-
-- ✅ **ClinicalExtractor**: Regex para sinais vitais
-- ✅ **Router**: Lógica determinística e gates  
-- ✅ **Confirmação**: Reconhecimento sim/não em PT-BR
-- ⏳ **Fluxos**: Testes dos 5 subgrafos
-- ⏳ **API**: Testes dos endpoints
-- ⏳ **RAG**: Testes do Pinecone/Sheets
-
-## 🔍 Debugging
-
-### Debug do Grafo
+### Teste Manual do Webhook
 
 ```bash
-curl -X POST http://localhost:8000/graph/debug/run \
+make test-webhook
+# ou
+curl -X POST "http://localhost:8000/webhook/whatsapp" \
   -H "Content-Type: application/json" \
   -d '{
-    "phoneNumber": "+5511999999999",
-    "text": "PA 120x80, quero finalizar",
-    "initial_state": {
-      "metadados": {"presenca_confirmada": true}
-    }
+    "message_id": "test123",
+    "phoneNumber": "5511999999999", 
+    "text": "PA 120x80 FC 75",
+    "meta": {}
   }'
 ```
 
-### Logs Estruturados
+## 🔍 Extração de Vitais
+
+O sistema usa **LLM estruturado** (não regex) para extrair sinais vitais:
+
+### Formatos Suportados
+- **PA**: "120x80", "12/8" (se inequívoco) → normaliza para "120x80"
+- **FC**: "75", "75 bpm" → 75
+- **FR**: "18", "18 rpm" → 18  
+- **Sat**: "97", "97%" → 97
+- **Temp**: "36,8", "36.8°C" → 36.8
+
+### Validações Automáticas
+- **FC**: 20-220 bpm
+- **FR**: 5-50 irpm
+- **Sat**: 50-100%
+- **Temp**: 30.0-43.0°C
+- **PA**: Sistólica 70-260, Diastólica 40-160
+
+### Exemplos
+
+```
+"PA 120x80 FC 75 FR 18 Sat 97 Temp 36.8 paciente com tosse"
+→ Vitais: PA=120x80, FC=75, FR=18, Sat=97, Temp=36.8
+→ Nota: "paciente com tosse"
+→ RAG identifica sintomas da nota
+```
+
+```
+"PA 12/8 e febre leve"  
+→ Vitais: PA=null (ambíguo), outros=null
+→ Nota: "febre leve"
+→ Warning: "PA_ambigua_12_8"
+```
+
+## 🔧 Sistema RAG (Opcional)
+
+### Google Sheets
+Formato esperado da planilha:
+| sintoma | pontuacao |
+|---------|-----------|
+| Tosse seca | 3 |
+| Febre | 5 |
+| Dor abdominal | 4 |
+
+### Pinecone
+- Índice com embeddings de sintomas
+- Metadata: `{"symptom": "nome", "category": "categoria"}`
+
+## 🚨 Troubleshooting
+
+### Erro: "Variáveis de ambiente obrigatórias não configuradas"
+- Verifique se `.env` existe e contém `OPENAI_API_KEY`, `LAMBDA_GET_SCHEDULE`, etc.
+
+### Erro: "Tabela DynamoDB não está acessível"
+- Verifique credenciais AWS
+- Confirme que a tabela `Conversas` existe
+- Teste: `curl http://localhost:8000/readyz`
+
+### LLM retorna JSON inválido
+- O sistema tem retry automático
+- Logs mostrarão warnings com `"falha_json_llm"`
+
+### RAG não funciona
+- Verifique `PINECONE_API_KEY` e `GOOGLE_CREDENTIALS_PATH`
+- RAG é opcional; sistema funciona sem ele
+
+## 📊 Logs
+
+Logs estruturados em JSON (PT-BR):
 
 ```json
-{
-  "timestamp": "2025-01-15T14:30:00-03:00",
-  "nivel": "informacao", 
-  "evento": "roteamento_concluido",
-  "session_id": "session_5511999999999",
-  "intencao_llm": "finalizar",
-  "intencao_final": "clinical", 
-  "fluxo_final": "clinical",
-  "motivo": "vitals_before_finish"
-}
+{"evento":"entrada","session_id":"5511999999999","texto":"PA 120x80"}
+{"evento":"intencao","intencao":"clinico"}
+{"evento":"extracao","vitais_encontrados":["PA"],"tem_nota":false}
+{"evento":"lambda","nome":"updateClinicalData","status":"200"}
 ```
 
-### Monitoramento
+Nível de log configurável via `LOG_LEVEL` (DEBUG, INFO, WARNING, ERROR).
 
-- **Request ID** em todos os logs
-- **Tempo de execução** por endpoint
-- **Status das dependências** via `/readyz`
-- **Métricas do Redis** e Pinecone
-- **Cache hit/miss** rates
+## 🏗️ Arquitetura
 
-## 🤖 Classificação Semântica com LLM
-
-### Arquitetura Inteligente
-
-O sistema utiliza **GPT-4o-mini** para classificação semântica de intenções, com **LLM as a Judge** para validação e correção automática:
-
-```python
-# Classificação principal
-resultado = await classify_semantic(texto, estado)
-
-# Validação com Judge (se confiança < 0.8)
-if resultado.confidence < 0.8:
-    resultado = await validar_com_judge(texto, resultado, estado)
-```
-
-### Intenções Suportadas
-
-- `CONFIRMAR_PRESENCA`: "cheguei", "estou aqui", "confirmo presença"
-- `CANCELAR_PRESENCA`: "cancelar", "não posso ir", "imprevisto"
-- `SINAIS_VITAIS`: "PA 120x80", "FC 78 bpm", "temperatura 36.5"
-- `NOTA_CLINICA`: "paciente consciente", "sem alterações"
-- `FINALIZAR_PLANTAO`: "finalizar", "encerrar plantão"
-- `CONFIRMACAO_SIM/NAO`: confirmações genéricas
-- `PEDIR_AJUDA`: "ajuda", "não sei"
-- `INDEFINIDO`: quando não é possível classificar
-
-### Circuit Breaker e Fallbacks
-
-```python
-# Proteção contra falhas
-@circuit_breaker("llm_classifier", LLM_CIRCUIT_CONFIG)
-async def _executar_classificacao_llm(texto, estado):
-    # Chamada LLM protegida
+```mermaid
+graph TD
+    A[WhatsApp] --> B[FastAPI /webhook]
+    B --> C[Router LLM]
+    C --> D{Intenção}
+    D -->|escala| E[EscalaSubgraph]
+    D -->|clinico| F[ClinicoSubgraph]
+    D -->|operacional| G[OperacionalSubgraph]
+    D -->|finalizar| H[FinalizarSubgraph]
+    D -->|auxiliar| I[AuxiliarSubgraph]
     
-# Fallback determinístico
-except CircuitBreakerError:
-    return await _fallback_classificacao_deterministica(texto, estado)
+    F --> J[LLM Extractor]
+    F --> K[RAG System]
+    K --> L[Pinecone]
+    K --> M[Google Sheets]
+    
+    E --> N[FiscalProcessor]
+    F --> N
+    G --> N
+    H --> N
+    I --> N
+    
+    N --> O[DynamoDB State]
+    N --> P[Lambda Calls]
+    N --> Q[Response]
 ```
 
-### Cache Inteligente
+## 🤝 Contribuindo
 
-- **Memória**: Cache local (LRU) para respostas rápidas
-- **Redis**: Cache distribuído com TTL configurável
-- **TTL Otimizado**: 30min para LLM, 1h para RAG, 5min para Lambda
-
-## 📋 Quando Usar LLM vs Determinístico
-
-### ✅ Determinístico (Sempre Preferir)
-
-- **Retomada** (`aux.retomar_apos`) → seguir direto
-- **Pergunta pendente** → validar sim/não por regex
-- **Sinais vitais** → extrair por regex (PA, FC, FR, Sat, Temp)
-- **Gates de negócio** → presença, SV obrigatórios, turno cancelado
-- **Ferramentas/Lambdas** → payload e cenários 100% determinísticos
-
-### 🤖 LLM (Apenas Fallback)
-
-- **Classificação de intenção** quando **nenhuma** regra resolveu
-- **Temperatura 0** + JSON estruturado obrigatório
-- **Sempre validado** por gates pós-classificação
-- **(Opcional)** Extração de termos para RAG se heurística falhar
-
-## 🔒 Segurança e Idempotência
-
-### Two-Phase Commit
-
-- **Staging** → pergunta de confirmação → **Commit/Cancel**
-- **Timeout** de 10 minutos para confirmação
-- **Idempotência** via `message_id` e `acao_pendente.executado`
-
-### Dedupe de Mensagens
-
-- **Redis**: `msg:{message_id}` com TTL de 10 minutos
-- **Cache de resposta** para mensagens duplicadas
-- **Middleware** automático no FastAPI
-
-### Validações
-
-- **Pydantic v2** para todos os schemas
-- **Range validation** para sinais vitais
-- **Sanitização** de dados sensíveis nos logs
-
-## 🚀 Deploy e Produção
-
-### Variáveis Críticas
-
-```bash
-# Obrigatórias (aplicação não inicia sem elas)
-LAMBDA_GET_SCHEDULE=https://...
-LAMBDA_UPDATE_SCHEDULE=https://...
-LAMBDA_UPDATE_CLINICAL=https://...  
-LAMBDA_UPDATE_SUMMARY=https://...
-
-# Recomendadas
-REDIS_URL=redis://...
-PINECONE_API_KEY=...
-OPENAI_API_KEY=...
-```
-
-### Docker (Opcional)
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY pyproject.toml .
-RUN pip install -e .
-
-COPY . .
-
-EXPOSE 8000
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### Health Checks
-
-- `GET /healthz` - Básico (sempre retorna OK)
-- `GET /readyz` - Completo (testa Redis, Pinecone, Sheets, Lambdas)
-
-## 📞 Integração com Webhook Existente
-
-Seu webhook atual **permanece responsável** por:
-
-- ✅ Processar mensagens da Meta
-- ✅ Enviar respostas ao WhatsApp  
-- ✅ Enviar templates proativos
-
-### Fluxo de Integração
-
-```
-Meta → Seu Webhook → POST /webhook/whatsapp → Resposta → Seu Webhook → Meta
-```
-
-### Notificar Templates
-
-**Sempre** que enviar um template, chame:
-
-```bash
-POST /events/template-sent
-{
-  "phoneNumber": "+5511999999999", 
-  "template": "pedir_sinais_vitais",
-  "metadata": {"hint_campos_faltantes": ["FR","Sat","Temp"]}
-}
-```
-
-Isso **ajusta o estado** para a próxima mensagem cair no fluxo certo.
-
-## 🤝 Contribuição
-
-### Estrutura do Código
-
-```
-app/
-├── api/          # FastAPI (routes, schemas, middleware)
-├── graph/        # LangGraph (router, flows, state, tools)  
-├── rag/          # Pinecone + Google Sheets
-└── infra/        # Redis, logging, two-phase commit
-```
-
-### Padrões
-
-- **Português BR** para logs, variáveis e comentários
-- **Pydantic v2** para validação
-- **Async/await** para I/O
-- **Structured logging** com contexto
-- **Type hints** obrigatórios
-- **Docstrings** em português
-
-### Adicionar Novo Fluxo
-
-1. Criar `app/graph/flows/novo_flow.py`
-2. Implementar função principal + two-phase commit
-3. Adicionar nó em `app/graph/builder.py`
-4. Atualizar router em `app/graph/router.py`
-5. Criar testes em `tests/test_novo_flow.py`
-
-## 📚 Referências
-
-- [LangGraph Docs](https://langchain-ai.github.io/langgraph/)
-- [FastAPI Docs](https://fastapi.tiangolo.com/)
-- [Pydantic v2](https://docs.pydantic.dev/latest/)
-- [Redis Python](https://redis-py.readthedocs.io/)
-- [Pinecone Docs](https://docs.pinecone.io/)
+1. Fork o projeto
+2. Crie uma branch (`git checkout -b feature/nova-funcionalidade`)
+3. Commit suas mudanças (`git commit -am 'Adiciona nova funcionalidade'`)
+4. Push para a branch (`git push origin feature/nova-funcionalidade`)
+5. Abra um Pull Request
 
 ## 📄 Licença
 
-[Definir licença apropriada]
+Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para mais detalhes.
 
 ---
 
-**Sistema robusto, determinístico e state-aware para orquestração de plantões domiciliares via WhatsApp** 🏥📱
+**WhatsApp Orchestrator** - Sistema completo de orquestração de fluxos de saúde domiciliar 🏥📱

@@ -1,0 +1,17 @@
+{
+  "name": "update-clinical-data",
+  "version": "1.0.0",
+  "description": "Lambda para processamento de dados clínicos (sinais vitais, sintomas, notas)",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.x",
+    "@aws-sdk/util-dynamodb": "^3.x",
+    "uuid": "^9.x"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["aws", "lambda", "dynamodb", "clinical-data", "vital-signs", "symptoms"],
+  "author": "Geria Team",
+  "license": "MIT"
+}

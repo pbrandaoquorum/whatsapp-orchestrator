@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  updateClinicalData
+  
+  Lambda consolidado que processa dados clínicos incluindo NoteReport, SymptomReport e sinais vitais
+
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime: nodejs18.x
+    Environment:
+      Variables:
+        REGION: sa-east-1
+        REPORTS_TABLE: Reports
+        FAMILY_REPORTS_TABLE: FamilyReports
+        FAMILY_MEMBERS_TABLE: FamilyMembers
+        SYMPTOM_REPORTS_TABLE: SymptomReports
+        ALERTS_TABLE: Alerts
+        CAREGIVERS_TABLE: Caregivers
+        PATIENTS_TABLE: Patients
+        VITAL_SIGNS_TABLE: VitalSigns
+        VITAL_SIGNS_TEST_TABLE: VitalSignsTest
+        WORK_SCHEDULES_TABLE: WorkSchedules
+
+Resources:
+  # Helper Functions Layer
+  HelpersLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: clinical-data-helpers
+      Description: Helper functions for clinical data processing
+      ContentUri: layers/helpers/
+      CompatibleRuntimes:
+        - nodejs18.x
+      RetentionPolicy: Delete
+
+  # Main Lambda Function
+  UpdateClinicalDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: index.handler
+      Layers:
+        - !Ref HelpersLayer
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: Reports
+        - DynamoDBCrudPolicy:
+            TableName: FamilyReports
+        - DynamoDBCrudPolicy:
+            TableName: FamilyMembers
+        - DynamoDBCrudPolicy:
+            TableName: SymptomReports
+        - DynamoDBCrudPolicy:
+            TableName: Alerts
+        - DynamoDBCrudPolicy:
+            TableName: Caregivers
+        - DynamoDBCrudPolicy:
+            TableName: Patients
+        - DynamoDBCrudPolicy:
+            TableName: VitalSigns
+        - DynamoDBCrudPolicy:
+            TableName: VitalSignsTest
+        - DynamoDBCrudPolicy:
+            TableName: WorkSchedules
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /updateClinicalData
+            Method: post
+
+
+Outputs:
+  UpdateClinicalDataApi:
+    Description: "API Gateway endpoint URL for UpdateClinicalData function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/updateClinicalData/"
+  UpdateClinicalDataFunction:
+    Description: "UpdateClinicalData Lambda Function ARN"
+    Value: !GetAtt UpdateClinicalDataFunction.Arn
+  UpdateClinicalDataFunctionIamRole:
+    Description: "Implicit IAM Role created for UpdateClinicalData function"
+    Value: !GetAtt UpdateClinicalDataFunctionRole.Arn

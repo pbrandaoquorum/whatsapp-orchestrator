@@ -1,98 +1,155 @@
 """
-Utilitários para processamento de sinais vitais
-Agora usa apenas classificação semântica via LLM
+Orquestrador de extração clínica
+Combina LLM + validações determinísticas
 """
 from typing import Dict, Any, List
-from dataclasses import dataclass
+import structlog
+
+from app.llm.extractor import ClinicalExtractor
+
+logger = structlog.get_logger(__name__)
 
 
-@dataclass
-class VitalsResult:
-    """Resultado da extração de sinais vitais"""
-    processados: Dict[str, Any]
-    faltantes: List[str]
+# Faixas plausíveis para validação pós-LLM
+FAIXAS_VITAIS = {
+    "FC": {"min": 20, "max": 220, "nome": "Frequência Cardíaca"},
+    "FR": {"min": 5, "max": 50, "nome": "Frequência Respiratória"},
+    "Sat": {"min": 50, "max": 100, "nome": "Saturação O2"},
+    "Temp": {"min": 30.0, "max": 43.0, "nome": "Temperatura"}
+}
 
 
-# Sinais vitais obrigatórios
-SINAIS_VITAIS_OBRIGATORIOS = ["PA", "FC", "FR", "Sat", "Temp"]
-
-
-async def extrair_sinais_vitais_semanticos(texto: str) -> VitalsResult:
+def validar_pa(pa_str: str) -> tuple[bool, str]:
     """
-    Extrai sinais vitais usando classificação semântica via LLM
+    Valida string de pressão arterial no formato SxD
+    Retorna (válido, motivo_se_inválido)
     """
-    if not texto:
-        return VitalsResult(processados={}, faltantes=SINAIS_VITAIS_OBRIGATORIOS.copy())
+    if not pa_str or not isinstance(pa_str, str):
+        return False, "PA_vazia"
+    
+    if 'x' not in pa_str:
+        return False, "PA_formato_invalido"
     
     try:
-        from app.graph.semantic_classifier import classify_semantic
-        from app.graph.state import GraphState, CoreState
+        partes = pa_str.split('x')
+        if len(partes) != 2:
+            return False, "PA_formato_invalido"
         
-        # Criar estado mínimo para classificação
-        estado_temp = GraphState(
-            core=CoreState(session_id="temp", numero_telefone="temp"),
-            texto_usuario=texto
-        )
+        sistolica = int(partes[0])
+        diastolica = int(partes[1])
         
-        # Classificar semanticamente
-        resultado = await classify_semantic(texto, estado_temp)
+        # Faixas plausíveis
+        if not (70 <= sistolica <= 260):
+            return False, f"PA_sistolica_fora_faixa_{sistolica}"
         
-        if resultado.intent.value == "sinais_vitais" and resultado.vital_signs:
-            processados = resultado.vital_signs
-            faltantes = [sv for sv in SINAIS_VITAIS_OBRIGATORIOS if sv not in processados]
-            return VitalsResult(processados=processados, faltantes=faltantes)
+        if not (40 <= diastolica <= 160):
+            return False, f"PA_diastolica_fora_faixa_{diastolica}"
+        
+        if sistolica <= diastolica:
+            return False, "PA_sistolica_menor_igual_diastolica"
+        
+        return True, ""
+        
+    except ValueError:
+        return False, "PA_valores_nao_numericos"
+
+
+def extrair_clinico_via_llm(texto: str, extractor: ClinicalExtractor) -> Dict[str, Any]:
+    """
+    Extrai dados clínicos via LLM e aplica validações determinísticas
     
-    except Exception:
-        # Em caso de erro, retornar vazio
-        pass
+    Returns:
+        dict com:
+        - vitais: dict com PA, FC, FR, Sat, Temp (valores válidos ou None)
+        - nota: string ou None
+        - faltantes: list de campos faltantes
+        - warnings: list de warnings de validação
+        - raw_llm_result: resultado original do LLM
+    """
+    logger.info("Iniciando extração clínica via LLM", texto=texto[:100])
     
-    return VitalsResult(processados={}, faltantes=SINAIS_VITAIS_OBRIGATORIOS.copy())
-
-
-# Manter função legacy para compatibilidade (agora async)
-async def extrair_sinais_vitais(texto: str) -> VitalsResult:
-    """Função principal para extrair sinais vitais - agora via LLM semântico"""
-    return await extrair_sinais_vitais_semanticos(texto)
-
-
-def normalizar_sinais_vitais(dados: Dict[str, Any]) -> Dict[str, Any]:
-    """Normaliza dados de sinais vitais para formato padrão"""
-    normalizados = {}
+    # 1) Chama LLM
+    llm_result = extractor.extrair_json(texto)
     
-    for chave, valor in dados.items():
-        if chave == "PA" and isinstance(valor, str):
-            normalizados[chave] = valor
-        elif chave in ["FC", "FR", "Sat"] and isinstance(valor, (int, float)):
-            normalizados[chave] = int(valor)
-        elif chave == "Temp" and isinstance(valor, (int, float)):
-            normalizados[chave] = float(valor)
+    # 2) Extrai dados do resultado do LLM
+    vitais_llm = llm_result.get("vitals", {})
+    nota = llm_result.get("nota")
+    warnings = list(llm_result.get("warnings", []))
+    
+    # 3) Valida e normaliza cada vital
+    vitais_validados = {}
+    
+    # PA - validação especial
+    pa_raw = vitais_llm.get("PA")
+    if pa_raw:
+        pa_valida, motivo = validar_pa(pa_raw)
+        if pa_valida:
+            vitais_validados["PA"] = pa_raw
         else:
-            normalizados[chave] = valor
+            vitais_validados["PA"] = None
+            warnings.append(motivo)
+            logger.warning("PA inválida", pa_raw=pa_raw, motivo=motivo)
+    else:
+        vitais_validados["PA"] = None
     
-    return normalizados
-
-
-def validar_sinais_vitais_completos(dados: Dict[str, Any]) -> bool:
-    """Verifica se todos os sinais vitais obrigatórios estão presentes"""
-    return all(sv in dados for sv in SINAIS_VITAIS_OBRIGATORIOS)
-
-
-def gerar_resumo_sinais_vitais(dados: Dict[str, Any]) -> str:
-    """Gera resumo textual dos sinais vitais para confirmação"""
-    if not dados:
-        return "Nenhum sinal vital informado"
+    # FC, FR, Sat, Temp - validação numérica
+    for campo in ["FC", "FR", "Sat", "Temp"]:
+        valor_raw = vitais_llm.get(campo)
+        
+        if valor_raw is None:
+            vitais_validados[campo] = None
+            continue
+        
+        try:
+            # Converte para número
+            if isinstance(valor_raw, (int, float)):
+                valor_num = float(valor_raw)
+            else:
+                valor_num = float(valor_raw)
+            
+            # Valida faixa
+            faixa = FAIXAS_VITAIS[campo]
+            if faixa["min"] <= valor_num <= faixa["max"]:
+                # Valor válido
+                if campo in ["FC", "FR", "Sat"]:
+                    vitais_validados[campo] = int(valor_num)  # Inteiro para estes
+                else:
+                    vitais_validados[campo] = valor_num  # Float para temperatura
+            else:
+                # Fora da faixa
+                vitais_validados[campo] = None
+                warnings.append(f"{campo}_incoerente_{valor_num}")
+                logger.warning("Vital fora da faixa",
+                             campo=campo,
+                             valor=valor_num,
+                             faixa_min=faixa["min"],
+                             faixa_max=faixa["max"])
+                
+        except (ValueError, TypeError):
+            # Não é número válido
+            vitais_validados[campo] = None
+            warnings.append(f"{campo}_nao_numerico_{valor_raw}")
+            logger.warning("Vital não numérico", campo=campo, valor_raw=valor_raw)
     
-    resumo_parts = []
+    # 4) Calcula faltantes
+    campos_obrigatorios = ["PA", "FC", "FR", "Sat", "Temp"]
+    faltantes = [
+        campo for campo in campos_obrigatorios
+        if vitais_validados.get(campo) is None
+    ]
     
-    if "PA" in dados:
-        resumo_parts.append(f"PA: {dados['PA']}")
-    if "FC" in dados:
-        resumo_parts.append(f"FC: {dados['FC']} bpm")
-    if "FR" in dados:
-        resumo_parts.append(f"FR: {dados['FR']} irpm")
-    if "Sat" in dados:
-        resumo_parts.append(f"Sat: {dados['Sat']}%")
-    if "Temp" in dados:
-        resumo_parts.append(f"Temp: {dados['Temp']}°C")
+    # 5) Log do resultado
+    vitais_presentes = [campo for campo, valor in vitais_validados.items() if valor is not None]
+    logger.info("Extração clínica concluída",
+               vitais_presentes=vitais_presentes,
+               faltantes=faltantes,
+               tem_nota=bool(nota),
+               warnings_count=len(warnings))
     
-    return ", ".join(resumo_parts)
+    return {
+        "vitais": vitais_validados,
+        "nota": nota,
+        "faltantes": faltantes,
+        "warnings": warnings,
+        "raw_llm_result": llm_result
+    }

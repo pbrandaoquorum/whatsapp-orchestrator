@@ -1,412 +1,176 @@
 """
-Router determinístico com classificação semântica via LLM leve
-State machine explícita + regras hard-coded + classificação semântica inteligente
+Router principal - Roteamento determinístico + LLM leve
+Implementa toda a lógica de gates e despacho
 """
-import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+import structlog
+
 from app.graph.state import GraphState
-from app.graph.semantic_classifier import classify_semantic, map_intent_to_flow, IntentType
-from app.graph.clinical_extractor import SINAIS_VITAIS_OBRIGATORIOS
-from app.graph.tools import obter_dados_turno  # Lambda getScheduleStarted
-from app.infra.confirm import is_yes, is_no
-from app.infra.timeutils import agora_br
-from app.infra.logging import obter_logger
+from app.llm.classifier import IntentClassifier
+from app.infra.http import LambdaHttpClient
 
-logger = obter_logger(__name__)
+logger = structlog.get_logger(__name__)
 
 
-def presenca_confirmada(estado: GraphState) -> bool:
-    """Verifica se a presença foi confirmada"""
-    # Método 1: Flag explícita nos metadados
-    if estado.metadados.get("presenca_confirmada", False):
-        return True
+class MainRouter:
+    """Router principal do sistema"""
     
-    # Método 2: Inferir do estado do core
-    return bool(
-        estado.core.turno_permitido and 
-        estado.core.turno_iniciado and 
-        not estado.core.cancelado
-    )
-
-
-def sinais_vitais_realizados(estado: GraphState) -> bool:
-    """Verifica se os sinais vitais foram completamente coletados"""
-    # Método 1: Flag explícita nos metadados
-    if estado.metadados.get("sinais_vitais_realizados", False):
-        return True
+    def __init__(self, 
+                 intent_classifier: IntentClassifier,
+                 http_client: LambdaHttpClient,
+                 lambda_get_schedule_url: str):
+        self.intent_classifier = intent_classifier
+        self.http_client = http_client
+        self.lambda_get_schedule_url = lambda_get_schedule_url
+        logger.info("MainRouter inicializado")
     
-    # Método 2: Verificar se todos os sinais obrigatórios estão presentes
-    processados = estado.vitais.processados
-    return all(sv in processados for sv in SINAIS_VITAIS_OBRIGATORIOS)
-
-
-def garantir_bootstrap_sessao(estado: GraphState) -> GraphState:
-    """Garante que a sessão foi inicializada com dados do Lambda"""
-    if not estado.core.schedule_id or not estado.core.report_id:
-        logger.info(
-            "Bootstrap necessário",
-            numero_telefone=estado.core.numero_telefone,
-            session_id=estado.core.session_id
-        )
-        
-        # Chamar lambda getScheduleStarted
-        estado = obter_dados_turno(estado)
-        
-        logger.info(
-            "Bootstrap concluído",
-            schedule_id=estado.core.schedule_id,
-            report_id=estado.core.report_id,
-            turno_permitido=estado.core.turno_permitido,
-            cancelado=estado.core.cancelado
+    def _verificar_dados_sessao(self, state: GraphState) -> bool:
+        """Verifica se os dados básicos da sessão estão presentes"""
+        sessao = state.sessao
+        return bool(
+            sessao.get("schedule_id") and 
+            sessao.get("report_id") and 
+            sessao.get("patient_id") and
+            sessao.get("caregiver_id")
         )
     
-    return estado
-
-
-def processar_retomada_pendente(estado: GraphState) -> str:
-    """Processa retomada pendente se existir"""
-    if not estado.aux.retomar_apos:
-        return None
-    
-    retomar = estado.aux.retomar_apos
-    fluxo_destino = retomar.get("flow")
-    motivo = retomar.get("reason", "desconhecido")
-    
-    logger.info(
-        "Retomando fluxo pendente",
-        fluxo_destino=fluxo_destino,
-        motivo=motivo
-    )
-    
-    # Limpar retomada após usar
-    estado.aux.retomar_apos = None
-    
-    return fluxo_destino
-
-
-async def processar_pergunta_pendente(estado: GraphState) -> str:
-    """Processa pergunta pendente (two-phase commit ou coleta incremental)"""
-    if not estado.aux.ultima_pergunta:
-        return None
-    
-    texto = estado.texto_usuario or ""
-    
-    # Caso 1: Two-phase commit (confirmação de ação)
-    if estado.aux.acao_pendente:
-        # Usar classificação semântica para confirmações
+    def _chamar_get_schedule_started(self, state: GraphState) -> None:
+        """Chama getScheduleStarted e preenche dados da sessão"""
+        telefone = state.sessao.get("telefone")
+        if not telefone:
+            logger.error("Telefone não encontrado na sessão")
+            raise Exception("Telefone é obrigatório para buscar dados da sessão")
+        
+        logger.info("Chamando getScheduleStarted", telefone=telefone)
+        
         try:
-            resultado = await classify_semantic(texto, estado)
+            result = self.http_client.get_schedule_started(
+                self.lambda_get_schedule_url, 
+                telefone
+            )
             
-            if resultado.intent == IntentType.CONFIRMACAO_SIM:
-                fluxo_destino = estado.aux.acao_pendente.get("fluxo_destino")
-                logger.info(
-                    "Ação confirmada semanticamente",
-                    fluxo_destino=fluxo_destino,
-                    confidence=resultado.confidence
-                )
-                return fluxo_destino
+            # Preenche dados da sessão
+            state.sessao.update({
+                "schedule_id": result.get("scheduleID"),
+                "report_id": result.get("reportID"),
+                "patient_id": result.get("patientID"),
+                "caregiver_id": result.get("caregiverID"),
+                "data_relatorio": result.get("reportDate"),
+                "turno_permitido": result.get("turnoPermitido", True),
+                "turno_iniciado": result.get("turnoIniciado", False),
+                "empresa": result.get("empresa"),
+                "cooperativa": result.get("cooperativa")
+            })
             
-            elif resultado.intent == IntentType.CONFIRMACAO_NAO:
-                logger.info("Ação cancelada semanticamente", confidence=resultado.confidence)
-                # Limpar ação pendente
-                estado.aux.acao_pendente = None
-                estado.aux.ultima_pergunta = None
-                estado.aux.fluxo_que_perguntou = None
-                estado.router.intencao = "cancelado"
-                return "auxiliar"
-        
+            logger.info("Dados da sessão atualizados via getScheduleStarted",
+                       schedule_id=state.sessao.get("schedule_id"),
+                       report_id=state.sessao.get("report_id"),
+                       turno_permitido=state.sessao.get("turno_permitido"))
+            
         except Exception as e:
-            logger.error(f"Erro na classificação semântica de confirmação: {e}")
-            # Sem fallback - retornar auxiliar para nova tentativa
-            return "auxiliar"
+            logger.error("Erro ao chamar getScheduleStarted", telefone=telefone, error=str(e))
+            # Em caso de erro, marca como não permitido para forçar fluxo auxiliar
+            state.sessao["turno_permitido"] = False
+            state.sessao["cancelado"] = True
+            raise
     
-    # Caso 2: Coleta incremental de sinais vitais
-    if estado.aux.fluxo_que_perguntou == "clinical":
-        try:
-            # Usar classificação semântica para detectar sinais vitais
-            resultado = await classify_semantic(texto, estado)
-            
-            if resultado.intent == IntentType.SINAIS_VITAIS and resultado.vital_signs:
-                # Merge dos sinais vitais parciais
-                estado.vitais.processados.update(resultado.vital_signs)
+    def _classificar_intencao(self, state: GraphState) -> str:
+        """Classifica intenção usando LLM"""
+        texto_usuario = state.entrada.get("texto_usuario", "")
+        
+        if not texto_usuario:
+            logger.warning("Texto do usuário vazio, usando intenção auxiliar")
+            return "auxiliar"
+        
+        intencao = self.intent_classifier.classificar_intencao(texto_usuario)
+        state.roteador["intencao"] = intencao
+        
+        logger.info("Intenção classificada", 
+                   texto=texto_usuario[:50],
+                   intencao=intencao)
+        
+        return intencao
+    
+    def _aplicar_gates_deterministicos(self, state: GraphState, intencao: str) -> str:
+        """
+        Aplica gates determinísticos APÓS classificação
+        Pode modificar a intenção baseado no estado
+        """
+        sessao = state.sessao
+        
+        # Gate 1: Se cancelado -> auxiliar
+        if sessao.get("cancelado"):
+            logger.info("Sessão cancelada, redirecionando para auxiliar")
+            return "auxiliar"
+        
+        # Gate 2: Se turno não permitido -> auxiliar
+        if not sessao.get("turno_permitido"):
+            logger.info("Turno não permitido, redirecionando para auxiliar")
+            return "auxiliar"
+        
+        # Gate 3: Se intenção é finalizar mas vitais incompletos -> clinico
+        if intencao == "finalizar":
+            vitais_completos = state.get_vitais_completos()
+            if not vitais_completos:
+                faltantes = state.get_vitais_faltantes()
+                logger.info("Finalizar solicitado mas vitais incompletos",
+                           faltantes=faltantes)
                 
-                # Recalcular faltantes
-                SINAIS_VITAIS_OBRIGATORIOS = ["PA", "FC", "FR", "Sat", "Temp"]
-                estado.vitais.faltantes = [
-                    sv for sv in SINAIS_VITAIS_OBRIGATORIOS 
-                    if sv not in estado.vitais.processados
-                ]
+                # Configura retomada
+                state.retomada = {
+                    "fluxo": "finalizar",
+                    "motivo": "precisa_vitais",
+                    "faltantes": faltantes
+                }
                 
-                logger.info(
-                    "Sinais vitais incrementais coletados semanticamente",
-                    novos_sinais=list(resultado.vital_signs.keys()),
-                    total_coletados=len(estado.vitais.processados),
-                    faltantes=len(estado.vitais.faltantes),
-                    confidence=resultado.confidence
-                )
-                
-                # Se completo, limpar pergunta e ir para clinical
-                if len(estado.vitais.faltantes) == 0:
-                    estado.aux.ultima_pergunta = None
-                    estado.aux.fluxo_que_perguntou = None
-                    return "clinical"
-                else:
-                    # Ainda faltam sinais, continuar no auxiliar
-                    estado.router.intencao = "coleta_incremental"
-                    return "auxiliar"
+                return "clinico"
         
-        except Exception as e:
-            logger.error(f"Erro na classificação semântica de sinais vitais: {e}")
-            # Sem fallback - manter no auxiliar para nova tentativa
-            return "auxiliar"
+        # Se chegou até aqui, mantém intenção original
+        return intencao
     
-    return None
-
-
-async def processar_classificacao_semantica(estado: GraphState) -> Optional[str]:
-    """Processa classificação semântica via LLM leve"""
-    texto = estado.texto_usuario or ""
-    
-    if not texto.strip():
-        return None
-    
-    try:
-        # Classificação semântica
-        resultado = await classify_semantic(texto, estado)
+    def rotear(self, state: GraphState) -> str:
+        """
+        Executa roteamento completo
         
-        logger.info(
-            "Classificação semântica concluída",
-            intent=resultado.intent,
-            confidence=resultado.confidence,
-            rationale=resultado.rationale,
-            session_id=estado.core.session_id
-        )
+        Returns:
+            Nome do próximo subgrafo a executar
+        """
+        logger.info("Iniciando roteamento", 
+                   session_id=state.sessao.get("session_id"),
+                   tem_retomada=state.tem_retomada())
         
-        # Atualizar estado com dados extraídos
-        if resultado.vital_signs:
-            # Processar sinais vitais detectados semanticamente
-            return processar_sinais_vitais_semanticos(estado, resultado.vital_signs)
-        
-        # Mapear intenção para fluxo
-        fluxo = map_intent_to_flow(resultado.intent)
-        
-        # Aplicar lógica contextual para confirmações
-        if resultado.intent == IntentType.CONFIRMACAO_SIM:
-            # Se não temos presença confirmada, esta é uma confirmação de presença
-            if not presenca_confirmada(estado):
-                fluxo = "escala"
-                logger.info("CONFIRMACAO_SIM mapeada para escala (confirmação de presença)")
-            else:
-                # Se já tem presença, pode ser confirmação de outro fluxo
-                fluxo = "auxiliar"
-                logger.info("CONFIRMACAO_SIM mapeada para auxiliar (presença já confirmada)")
-        
-        # Atualizar estado do router
-        estado.router.intencao = resultado.intent
-        
-        return fluxo
-        
-    except Exception as e:
-        logger.error(f"Erro na classificação semântica: {e}")
-        return "auxiliar"  # Sem fallback - apenas auxiliar
-
-
-def processar_sinais_vitais_semanticos(estado: GraphState, vital_signs: Dict[str, Any]) -> str:
-    """Processa sinais vitais detectados semanticamente"""
-    logger.info(
-        "Sinais vitais detectados semanticamente",
-        sinais_detectados=list(vital_signs.keys())
-    )
-    
-    # Verificar se presença foi confirmada
-    if not presenca_confirmada(estado):
-        logger.info(
-            "Sinais vitais detectados mas presença não confirmada",
-            guardando_em_buffer=True
-        )
-        
-        # Guardar em buffer e exigir presença primeiro
-        estado.aux.buffers["vitals"] = vital_signs
-        estado.aux.retomar_apos = {
-            "flow": "clinical",
-            "reason": "need_presence_first",
-            "ts": agora_br().isoformat()
-        }
-        estado.router.intencao = "escala"
-        return "escala"
-    else:
-        # Presença confirmada, processar sinais vitais
-        estado.vitais.processados.update(vital_signs)
-        
-        # Recalcular faltantes
-        SINAIS_VITAIS_OBRIGATORIOS = ["PA", "FC", "FR", "Sat", "Temp"]
-        estado.vitais.faltantes = [
-            sv for sv in SINAIS_VITAIS_OBRIGATORIOS 
-            if sv not in estado.vitais.processados
-        ]
-        
-        estado.router.intencao = "sinais_vitais"
-        return "clinical"
-
-
-def aplicar_gates_pos_classificacao(intencao: str, estado: GraphState) -> str:
-    """Aplica gates de negócio após classificação LLM"""
-    
-    # Gate 1: Turno cancelado (mas permitir confirmação de presença)
-    if estado.core.cancelado:
-        if intencao not in ["auxiliar", "confirmar_presenca", "cancelar_presenca"]:
-            logger.info(
-                "Intenção bloqueada - turno cancelado",
-                intencao_original=intencao,
-                turno_cancelado=estado.core.cancelado
-            )
-            return "auxiliar"
-    
-    # Gate 1.5: Turno não permitido (mas permitir tentativas de confirmação)
-    if estado.core.turno_permitido is False:  # Explicitamente False, não None
-        if intencao not in ["auxiliar", "confirmar_presenca", "cancelar_presenca"]:
-            logger.info(
-                "Intenção bloqueada - turno não permitido",
-                intencao_original=intencao,
-                turno_permitido=estado.core.turno_permitido
-            )
-            return "auxiliar"
-    
-    # Gate 2: Presença não confirmada
-    if intencao in ["clinical", "sinais_vitais", "notas", "finalizar"]:
-        if not presenca_confirmada(estado):
-            logger.info(
-                "Intenção requer presença confirmada",
-                intencao_original=intencao,
-                redirecionando_para="escala"
-            )
+        # 1. Se há retomada, pula classificação e despacha direto
+        if state.tem_retomada():
+            fluxo_retomada = state.retomada["fluxo"]
+            motivo = state.retomada.get("motivo", "")
+            logger.info("Retomada detectada", fluxo=fluxo_retomada, motivo=motivo)
             
-            # Guardar intenção para retomar após confirmar presença
-            mapeamento_retomada = {
-                "clinical": "clinical",
-                "sinais_vitais": "clinical",
-                "notas": "notas",
-                "finalizar": "finalizar"
-            }
-            
-            estado.aux.retomar_apos = {
-                "flow": mapeamento_retomada.get(intencao, "clinical"),
-                "reason": "need_presence_first",
-                "ts": agora_br().isoformat()
-            }
-            return "escala"
-    
-    # Gate 3: Finalizar sem sinais vitais
-    if intencao == "finalizar":
-        if not sinais_vitais_realizados(estado):
-            logger.info(
-                "Finalização requer sinais vitais completos",
-                redirecionando_para="clinical"
-            )
-            
-            estado.aux.retomar_apos = {
-                "flow": "finalizar",
-                "reason": "vitals_before_finish",
-                "ts": agora_br().isoformat()
-            }
-            return "clinical"
-    
-    return intencao
-
-
-def mapear_intencao_para_fluxo(intencao: str) -> str:
-    """Mapeia intenção final para nome do fluxo/nó"""
-    mapeamento = {
-        "escala": "escala",
-        "sinais_vitais": "clinical",
-        "clinical": "clinical",
-        "notas": "notas",
-        "finalizar": "finalizar",
-        "auxiliar": "auxiliar"
-    }
-    
-    return mapeamento.get(intencao, "auxiliar")
-
-
-async def route(estado: GraphState) -> str:
-    """
-    Função principal do router - implementação completa com classificação semântica
-    """
-    logger.info(
-        "Iniciando roteamento",
-        texto_usuario=estado.texto_usuario[:100] if estado.texto_usuario else None,
-        session_id=estado.core.session_id
-    )
-    
-    # Passo 0: Garantir bootstrap da sessão
-    estado = garantir_bootstrap_sessao(estado)
-    
-    # Passo 1: Verificar retomada pendente (maior prioridade)
-    fluxo_retomada = processar_retomada_pendente(estado)
-    if fluxo_retomada:
-        logger.info("Roteamento: retomada pendente", fluxo=fluxo_retomada)
-        return fluxo_retomada
-    
-    # Passo 2: Processar pergunta pendente (two-phase commit ou coleta incremental)
-    fluxo_pergunta = await processar_pergunta_pendente(estado)
-    if fluxo_pergunta:
-        logger.info("Roteamento: pergunta pendente", fluxo=fluxo_pergunta)
-        return fluxo_pergunta
-    
-    # Passo 3: Classificação semântica via LLM leve
-    logger.info("Executando classificação semântica")
-    fluxo_semantico = await processar_classificacao_semantica(estado)
-    if fluxo_semantico:
-        logger.info("Roteamento: classificação semântica", fluxo=fluxo_semantico)
-        intencao_semantica = estado.router.intencao
-    else:
-        logger.warning("Classificação semântica falhou - usando fallback")
-        intencao_semantica = "indefinido"
-        fluxo_semantico = "auxiliar"
-    
-    # Passo 4: Aplicar gates de negócio pós-classificação
-    intencao_final = aplicar_gates_pos_classificacao(intencao_semantica, estado)
-    
-    # Passo 5: Determinar fluxo final
-    if intencao_final != intencao_semantica:
-        # Gates modificaram a intenção
-        fluxo_final = mapear_intencao_para_fluxo(intencao_final)
-    else:
-        # Usar fluxo da classificação semântica
-        fluxo_final = fluxo_semantico
-    
-    # Atualizar estado do router
-    estado.router.intencao = intencao_final
-    estado.router.ultimo_fluxo = fluxo_final
-    
-    logger.info(
-        "Roteamento concluído",
-        intencao_semantica=intencao_semantica,
-        intencao_final=intencao_final,
-        fluxo_final=fluxo_final
-    )
-    
-    return fluxo_final
-
-
-# Função auxiliar para recuperar sinais vitais do buffer
-def recuperar_sinais_vitais_do_buffer(estado: GraphState) -> None:
-    """Recupera sinais vitais guardados no buffer após confirmar presença"""
-    if "vitals" in estado.aux.buffers:
-        vitais_buffer = estado.aux.buffers["vitals"]
-        estado.vitais.processados.update(vitais_buffer)
+            # Limpa retomada após usar
+            state.retomada = None
+            return fluxo_retomada
         
-        # Recalcular faltantes
-        estado.vitais.faltantes = [
-            sv for sv in SINAIS_VITAIS_OBRIGATORIOS 
-            if sv not in estado.vitais.processados
-        ]
+        # 2. Verifica se precisa buscar dados da sessão
+        if not self._verificar_dados_sessao(state):
+            logger.info("Dados da sessão faltando, chamando getScheduleStarted")
+            self._chamar_get_schedule_started(state)
         
-        # Limpar buffer
-        del estado.aux.buffers["vitals"]
+        # 3. Classifica intenção via LLM
+        intencao = self._classificar_intencao(state)
         
-        logger.info(
-            "Sinais vitais recuperados do buffer",
-            sinais_recuperados=list(vitais_buffer.keys()),
-            total_coletados=len(estado.vitais.processados)
-        )
+        # 4. Aplica gates determinísticos
+        intencao_final = self._aplicar_gates_deterministicos(state, intencao)
+        
+        # 5. Log do resultado final
+        if intencao != intencao_final:
+            logger.info("Intenção modificada por gates",
+                       intencao_original=intencao,
+                       intencao_final=intencao_final)
+        
+        # 6. Atualiza estado
+        state.roteador["intencao"] = intencao_final
+        
+        logger.info("Roteamento concluído",
+                   session_id=state.sessao.get("session_id"),
+                   intencao_final=intencao_final)
+        
+        return intencao_final

@@ -1,0 +1,9 @@
+{
+  "name": "clinical-data-helpers",
+  "version": "1.0.0",
+  "description": "Helper functions for clinical data processing",
+  "main": "utils.js",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.x"
+  }
+}

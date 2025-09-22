@@ -1,237 +1,260 @@
 """
-Aplicação principal FastAPI
+FastAPI principal - Rotas síncronas
 """
-import os
-from pathlib import Path
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel
+from typing import Dict, Any, Optional
+import structlog
 
-# Carregar variáveis de ambiente do arquivo .env
-from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
+from app.api.deps import (
+    get_settings, initialize_logging, get_dynamo_state_manager,
+    get_main_router, get_fiscal_processor,
+    get_escala_subgraph, get_clinico_subgraph, get_operacional_subgraph,
+    get_finalizar_subgraph, get_auxiliar_subgraph
+)
+from app.infra.dynamo_state import normalizar_session_id
+from app.graph.state import GraphState
 
-from app.api.routes import router
-from app.api.middleware import configurar_middlewares
-from app.api.schemas import ErrorResponse
-from app.infra.logging import configurar_logging, obter_logger
-from app.infra.timeutils import agora_br
+# Inicializa logging
+initialize_logging()
+logger = structlog.get_logger(__name__)
 
-# Configurar logging
-configurar_logging(os.getenv("LOG_LEVEL", "INFO"))
-logger = obter_logger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Gerencia ciclo de vida da aplicação"""
-    # Startup
-    logger.info("Iniciando aplicação WhatsApp Orchestrator")
-    
-    # Verificar variáveis de ambiente críticas
-    verificar_configuracao()
-    
-    # Inicializar dependências
-    await inicializar_dependencias()
-    
-    logger.info("Aplicação iniciada com sucesso")
-    
-    yield
-    
-    # Shutdown
-    logger.info("Encerrando aplicação")
-    await finalizar_dependencias()
-    logger.info("Aplicação encerrada")
-
-
-def verificar_configuracao():
-    """Verifica se configurações críticas estão presentes"""
-    variaveis_obrigatorias = [
-        "LAMBDA_GET_SCHEDULE",
-        "LAMBDA_UPDATE_SCHEDULE", 
-        "LAMBDA_UPDATE_CLINICAL",
-        "LAMBDA_UPDATE_SUMMARY"
-    ]
-    
-    variaveis_faltantes = []
-    for var in variaveis_obrigatorias:
-        if not os.getenv(var):
-            variaveis_faltantes.append(var)
-    
-    if variaveis_faltantes:
-        logger.error(
-            "Variáveis de ambiente obrigatórias não configuradas",
-            variaveis_faltantes=variaveis_faltantes
-        )
-        raise RuntimeError(f"Variáveis faltantes: {', '.join(variaveis_faltantes)}")
-    
-    logger.info("Configuração validada com sucesso")
-
-
-async def inicializar_dependencias():
-    """Inicializa dependências da aplicação"""
-    try:
-        # Testar conexões
-        from app.rag.pinecone_client import testar_conexao as testar_pinecone
-        from app.rag.sheets_sync import testar_conexao_sheets
-        
-        # Pinecone (opcional - apenas warning se falhar)
-        try:
-            if testar_pinecone():
-                logger.info("Conexão Pinecone testada com sucesso")
-            else:
-                logger.warning("Falha na conexão Pinecone - RAG pode não funcionar")
-        except Exception as e:
-            logger.warning(f"Erro ao testar Pinecone: {e}")
-        
-        # Google Sheets (opcional - apenas warning se falhar)
-        try:
-            if testar_conexao_sheets():
-                logger.info("Conexão Google Sheets testada com sucesso")
-            else:
-                logger.warning("Falha na conexão Google Sheets - sincronização pode não funcionar")
-        except Exception as e:
-            logger.warning(f"Erro ao testar Google Sheets: {e}")
-        
-        # Testar conexão com DynamoDB
-        try:
-            from app.infra.dynamo_client import health_check as dynamo_health
-            dynamo_status = await dynamo_health()
-            if dynamo_status["status"] == "healthy":
-                logger.info("DynamoDB conectado com sucesso")
-            else:
-                logger.warning("DynamoDB não está saudável", status=dynamo_status)
-        except Exception as e:
-            logger.warning(f"Erro ao testar DynamoDB: {e}")
-        
-        logger.info("Dependências inicializadas")
-        
-    except Exception as e:
-        logger.error(f"Erro ao inicializar dependências: {e}")
-        # Não falhar a aplicação por dependências opcionais
-        # raise
-
-
-async def finalizar_dependencias():
-    """Finaliza dependências da aplicação"""
-    try:
-        # Cleanup de recursos DynamoDB (conexões são gerenciadas pelo boto3)
-        
-        logger.info("Dependências finalizadas")
-        
-    except Exception as e:
-        logger.error(f"Erro ao finalizar dependências: {e}")
-
-
-# Criar aplicação FastAPI
+# Cria app FastAPI
 app = FastAPI(
     title="WhatsApp Orchestrator",
-    description="Sistema FastAPI + LangGraph para orquestração de fluxos WhatsApp",
-    version="1.0.0",
-    lifespan=lifespan
+    description="Sistema de orquestração de fluxos WhatsApp usando LangGraph",
+    version="1.0.0"
 )
 
-# Configurar middlewares
-configurar_middlewares(app)
 
-# Incluir rotas principais
-app.include_router(router)
-
-# Incluir rotas DynamoDB como padrão
-from app.api.routes_dynamo import router as dynamo_router
-app.include_router(dynamo_router)
+# Schemas de request/response
+class WebhookRequest(BaseModel):
+    message_id: str
+    phoneNumber: str
+    text: str
+    meta: Dict[str, Any] = {}
 
 
-# Exception handlers
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request, exc):
-    """Handler para erros de validação"""
-    logger.warning(
-        "Erro de validação na request",
-        url=str(request.url),
-        errors=exc.errors()
-    )
+class WebhookResponse(BaseModel):
+    reply: str
+    session_id: str
+    status: str = "success"
+
+
+class HealthResponse(BaseModel):
+    status: str
+    message: str
+
+
+# Orquestrador principal
+class WhatsAppOrchestrator:
+    """Orquestrador principal que executa o grafo"""
     
-    return JSONResponse(
-        status_code=422,
-        content=ErrorResponse(
-            error="validation_error",
-            message="Dados da request inválidos",
-            details={"errors": exc.errors()}
-        ).dict()
-    )
-
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """Handler para HTTPExceptions"""
-    logger.error(
-        "HTTP Exception",
-        url=str(request.url),
-        status_code=exc.status_code,
-        detail=exc.detail
-    )
+    def __init__(self):
+        # Componentes
+        self.dynamo_manager = get_dynamo_state_manager()
+        self.router = get_main_router()
+        self.fiscal = get_fiscal_processor()
+        
+        # Subgrafos
+        self.subgraphs = {
+            "escala": get_escala_subgraph(),
+            "clinico": get_clinico_subgraph(),
+            "operacional": get_operacional_subgraph(),
+            "finalizar": get_finalizar_subgraph(),
+            "auxiliar": get_auxiliar_subgraph()
+        }
+        
+        logger.info("WhatsAppOrchestrator inicializado")
     
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=ErrorResponse(
-            error="http_error",
-            message=exc.detail,
-            details={"status_code": exc.status_code}
-        ).dict()
-    )
+    def executar_grafo(self, phone_number: str, texto_usuario: str, meta: Dict[str, Any]) -> str:
+        """
+        Executa grafo completo: router → subgrafo → fiscal
+        
+        Returns:
+            Resposta final para o usuário
+        """
+        # 1. Normaliza session_id
+        session_id = normalizar_session_id(phone_number)
+        
+        logger.info("Executando grafo",
+                   session_id=session_id,
+                   texto=texto_usuario[:100])
+        
+        try:
+            # 2. Carrega estado
+            state = self.dynamo_manager.carregar_estado(session_id)
+            
+            # 3. Atualiza entrada
+            state.entrada["texto_usuario"] = texto_usuario
+            state.entrada["meta"] = meta
+            state.sessao["telefone"] = phone_number
+            
+            # 4. Router decide próximo subgrafo
+            proximo_subgrafo = self.router.rotear(state)
+            
+            logger.info("Router decidiu próximo subgrafo",
+                       session_id=session_id,
+                       subgrafo=proximo_subgrafo)
+            
+            # 5. Executa subgrafo
+            if proximo_subgrafo not in self.subgraphs:
+                raise ValueError(f"Subgrafo não encontrado: {proximo_subgrafo}")
+            
+            resultado_subgrafo = self.subgraphs[proximo_subgrafo].processar(state)
+            
+            logger.info("Subgrafo executado",
+                       session_id=session_id,
+                       subgrafo=proximo_subgrafo,
+                       resultado=resultado_subgrafo[:100] if resultado_subgrafo else None)
+            
+            # 6. Fiscal consolida resposta final
+            resposta_final = self.fiscal.processar_resposta_fiscal(state, resultado_subgrafo)
+            
+            # 7. Salva estado
+            self.dynamo_manager.salvar_estado(session_id, state)
+            
+            logger.info("Grafo executado com sucesso",
+                       session_id=session_id,
+                       resposta_length=len(resposta_final))
+            
+            return resposta_final
+            
+        except Exception as e:
+            logger.error("Erro na execução do grafo",
+                        session_id=session_id,
+                        error=str(e))
+            raise
 
 
-@app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
-    """Handler para exceções gerais"""
-    logger.error(
-        "Exceção não tratada",
-        url=str(request.url),
-        exception_type=type(exc).__name__,
-        exception_message=str(exc)
-    )
+# Instância global do orquestrador
+orchestrator = WhatsAppOrchestrator()
+
+
+@app.post("/webhook/whatsapp", response_model=WebhookResponse)
+def webhook_whatsapp(request: WebhookRequest) -> WebhookResponse:
+    """
+    Webhook principal do WhatsApp
     
-    return JSONResponse(
-        status_code=500,
-        content=ErrorResponse(
-            error="internal_error",
-            message="Erro interno do servidor",
-            details={"type": type(exc).__name__}
-        ).dict()
+    Fluxo:
+    - Normalizar session_id = phoneNumber
+    - carregar_estado
+    - injetar entrada.texto_usuario
+    - executar grafo (router → subgrafo → fiscal)
+    - salvar_estado
+    - retornar {"reply": state.resposta_fiscal, "session_id": "..."}
+    """
+    try:
+        logger.info("Webhook recebido",
+                   message_id=request.message_id,
+                   phone_number=request.phoneNumber,
+                   text=request.text[:100])
+        
+        # Executa orquestração
+        resposta = orchestrator.executar_grafo(
+            phone_number=request.phoneNumber,
+            texto_usuario=request.text,
+            meta=request.meta
+        )
+        
+        session_id = normalizar_session_id(request.phoneNumber)
+        
+        return WebhookResponse(
+            reply=resposta,
+            session_id=session_id,
+            status="success"
+        )
+        
+    except Exception as e:
+        logger.error("Erro no webhook",
+                    message_id=request.message_id,
+                    phone_number=request.phoneNumber,
+                    error=str(e))
+        
+        # Retorna erro amigável
+        return WebhookResponse(
+            reply="Desculpe, ocorreu um erro interno. Tente novamente em alguns instantes.",
+            session_id=normalizar_session_id(request.phoneNumber),
+            status="error"
+        )
+
+
+@app.get("/healthz", response_model=HealthResponse)
+def health_check() -> HealthResponse:
+    """Health check simples"""
+    return HealthResponse(
+        status="ok",
+        message="WhatsApp Orchestrator está funcionando"
     )
 
 
-# Endpoint raiz
+@app.get("/readyz", response_model=HealthResponse)
+def readiness_check() -> HealthResponse:
+    """
+    Readiness check - valida configurações e acesso ao DynamoDB
+    """
+    try:
+        # Valida configurações
+        settings = get_settings()
+        
+        # Testa acesso ao DynamoDB
+        dynamo_manager = get_dynamo_state_manager()
+        tabela_ok = dynamo_manager.verificar_tabela()
+        
+        if not tabela_ok:
+            raise Exception("Tabela DynamoDB não está acessível")
+        
+        return HealthResponse(
+            status="ready",
+            message="Todos os sistemas estão prontos"
+        )
+        
+    except Exception as e:
+        logger.error("Readiness check falhou", error=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail=f"Sistema não está pronto: {str(e)}"
+        )
+
+
 @app.get("/")
-async def root():
-    """Endpoint raiz com informações básicas"""
+def root():
+    """Endpoint raiz"""
     return {
         "service": "WhatsApp Orchestrator",
         "version": "1.0.0",
         "status": "running",
-        "timestamp": agora_br().isoformat(),
         "endpoints": {
             "webhook": "/webhook/whatsapp",
-            "templates": "/events/template-sent",
-            "debug": "/graph/debug/run",
             "health": "/healthz",
-            "readiness": "/readyz",
-            "rag_sync": "/rag/sync",
-            "rag_search": "/rag/search"
+            "readiness": "/readyz"
         }
     }
 
 
-if __name__ == "__main__":
-    import uvicorn
+# Event handlers
+@app.on_event("startup")
+def startup_event():
+    """Evento de inicialização"""
+    logger.info("WhatsApp Orchestrator iniciando...")
     
-    # Configuração para desenvolvimento
-    uvicorn.run(
-        "app.api.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    try:
+        # Valida configurações
+        settings = get_settings()
+        logger.info("Configurações validadas")
+        
+        # Testa componentes críticos
+        dynamo_manager = get_dynamo_state_manager()
+        logger.info("DynamoDB conectado")
+        
+        logger.info("WhatsApp Orchestrator iniciado com sucesso")
+        
+    except Exception as e:
+        logger.error("Erro na inicialização", error=str(e))
+        raise
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    """Evento de finalização"""
+    logger.info("WhatsApp Orchestrator finalizando...")
