@@ -82,7 +82,7 @@ cp .env.example .env
 
 ```env
 # OpenAI (para classificação e extração)
-OPENAI_API_KEY=sk-seu-openai-api-key
+OPENAI_API_KEY=SEU_OPENAI_KEY
 INTENT_MODEL=gpt-4o-mini
 EXTRACTOR_MODEL=gpt-4o-mini
 
