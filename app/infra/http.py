@@ -75,10 +75,13 @@ class LambdaHttpClient:
         
         result = self._make_request('POST', url, json=payload)
         
+        # Debug: mostrar response completo
         logger.info("getScheduleStarted concluído",
                    phone_number=phone_number,
                    success=True,
-                   has_schedule_id='scheduleID' in result)
+                   has_schedule_id='scheduleID' in result,
+                   response_keys=list(result.keys()),
+                   schedule_id_value=result.get('scheduleID'))
         
         return result
     

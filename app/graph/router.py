@@ -56,11 +56,20 @@ class MainRouter:
                 "patient_id": result.get("patientID"),
                 "caregiver_id": result.get("caregiverID"),
                 "data_relatorio": result.get("reportDate"),
-                "turno_permitido": result.get("turnoPermitido", True),
-                "turno_iniciado": result.get("turnoIniciado", False),
-                "empresa": result.get("empresa"),
-                "cooperativa": result.get("cooperativa")
+                "turno_permitido": result.get("shiftAllow", True),
+                "turno_iniciado": result.get("scheduleStarted", False),
+                "empresa": result.get("caregiverCompany"),
+                "cooperativa": result.get("caregiverCooperative")
             })
+            
+            # Debug: mostrar dados extraídos
+            logger.info("Dados extraídos do getScheduleStarted",
+                       schedule_id=state.sessao.get("schedule_id"),
+                       report_id=state.sessao.get("report_id"),
+                       patient_id=state.sessao.get("patient_id"),
+                       caregiver_id=state.sessao.get("caregiver_id"),
+                       turno_permitido=state.sessao.get("turno_permitido"),
+                       turno_iniciado=state.sessao.get("turno_iniciado"))
             
             logger.info("Dados da sessão atualizados via getScheduleStarted",
                        schedule_id=state.sessao.get("schedule_id"),

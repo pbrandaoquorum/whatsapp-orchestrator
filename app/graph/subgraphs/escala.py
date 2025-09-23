@@ -68,7 +68,7 @@ class EscalaSubgraph:
         if acao == 'confirmar':
             payload = {
                 "scheduleID": schedule_id,
-                "action": "confirm",
+                "responseValue": "confirmado",
                 "caregiverID": sessao.get("caregiver_id"),
                 "phoneNumber": sessao.get("telefone")
             }
@@ -77,7 +77,7 @@ class EscalaSubgraph:
         elif acao == 'cancelar':
             payload = {
                 "scheduleID": schedule_id,
-                "action": "cancel",
+                "responseValue": "cancelado",
                 "caregiverID": sessao.get("caregiver_id"),
                 "phoneNumber": sessao.get("telefone"),
                 "reason": "Cancelado pelo cuidador"
