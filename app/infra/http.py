@@ -89,7 +89,7 @@ class LambdaHttpClient:
         """Chama updateWorkScheduleResponse Lambda"""
         logger.info("Chamando updateWorkScheduleResponse", 
                    schedule_id=payload.get('scheduleID'),
-                   action=payload.get('action'))
+                   action=payload.get('responseValue'))
         
         result = self._make_request('POST', url, json=payload)
         

@@ -41,7 +41,12 @@ class FinalizarSubgraph:
             "scheduleID": sessao.get("schedule_id"),
             "caregiverID": sessao.get("caregiver_id"),
             "patientID": sessao.get("patient_id"),
-            "action": "finalize"
+            # Campos esperados pelo updatereportsummaryad
+            "patientFirstName": "Paciente",  # Será preenchido pelo lambda se necessário
+            "caregiverFirstName": "Cuidador",  # Será preenchido pelo lambda se necessário
+            "shiftDay": "Hoje",  # Será preenchido pelo lambda se necessário
+            "shiftStart": "00:00",  # Será preenchido pelo lambda se necessário
+            "shiftEnd": "23:59"  # Será preenchido pelo lambda se necessário
         }
         
         logger.debug("Payload finalização preparado",

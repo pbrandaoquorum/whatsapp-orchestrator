@@ -58,8 +58,8 @@ class MainRouter:
                 "data_relatorio": result.get("reportDate"),
                 "turno_permitido": result.get("shiftAllow", True),
                 "turno_iniciado": result.get("scheduleStarted", False),
-                "empresa": result.get("caregiverCompany"),
-                "cooperativa": result.get("caregiverCooperative")
+                "empresa": result.get("company"),
+                "cooperativa": result.get("cooperative")
             })
             
             # Debug: mostrar dados extraídos
