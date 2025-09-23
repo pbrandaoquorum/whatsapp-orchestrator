@@ -99,6 +99,9 @@ class WhatsAppOrchestrator:
             # 4. Router decide próximo subgrafo
             proximo_subgrafo = self.router.rotear(state)
             
+            # 4.1. Salva estado após router (preservação de dados clínicos)
+            self.dynamo_manager.salvar_estado(session_id, state)
+            
             logger.info("Router decidiu próximo subgrafo",
                        session_id=session_id,
                        subgrafo=proximo_subgrafo)

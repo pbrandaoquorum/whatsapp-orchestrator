@@ -137,6 +137,74 @@ class MainRouter:
         # Se chegou até aqui, mantém intenção original
         return intencao
     
+    def _preservar_dados_clinicos_se_necessario(self, state: GraphState) -> None:
+        """
+        🧠 LÓGICA INTELIGENTE: Preserva dados clínicos quando há confirmação pendente
+        Independente de qual fluxo está pendente, sempre tenta extrair dados clínicos
+        """
+        try:
+            texto_usuario = state.entrada.get("texto_usuario", "")
+            if not texto_usuario:
+                return
+            
+            # 🧠 PRESERVA SEMPRE que há dados clínicos, independente de pendente
+            # Isso garante que dados não sejam perdidos em qualquer situação
+            
+            # Preservação silenciosa de dados clínicos
+            
+            # Import dinâmico para evitar dependências circulares
+            from app.graph.clinical_extractor import extrair_clinico_via_llm
+            from app.llm.extractor import ClinicalExtractor
+            import os
+            
+            # Criar extrator
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                return
+            
+            extractor = ClinicalExtractor(
+                api_key=api_key,
+                model=os.getenv("EXTRACTOR_MODEL", "gpt-4o-mini")
+            )
+            
+            # Extrair dados clínicos
+            resultado_extracao = extrair_clinico_via_llm(texto_usuario, extractor)
+            
+            # Verificar se encontrou dados relevantes
+            vitais_encontrados = {}
+            for campo, valor in resultado_extracao.get("vitais", {}).items():
+                if valor is not None:
+                    vitais_encontrados[campo] = valor
+            
+            nota_encontrada = resultado_extracao.get("nota")
+            
+            if not vitais_encontrados and not nota_encontrada:
+                return  # Nada para preservar
+            
+            # Preservar no estado (mesclar com existentes)
+            clinico_atual = state.clinico
+            
+            # Mesclar vitais (novos sobrescrevem antigos)
+            for campo, valor in vitais_encontrados.items():
+                clinico_atual["vitais"][campo] = valor
+            
+            # Atualizar nota se encontrada
+            if nota_encontrada:
+                clinico_atual["nota"] = nota_encontrada
+            
+            # Atualizar lista de faltantes
+            campos_obrigatorios = ["PA", "FC", "FR", "Sat", "Temp"]
+            faltantes = [
+                campo for campo in campos_obrigatorios 
+                if not clinico_atual["vitais"].get(campo)
+            ]
+            clinico_atual["faltantes"] = faltantes
+            
+            # Dados preservados silenciosamente
+            
+        except Exception as e:
+            logger.error("Erro ao preservar dados clínicos no router", error=str(e))
+    
     def rotear(self, state: GraphState) -> str:
         """
         Executa roteamento completo
@@ -147,6 +215,9 @@ class MainRouter:
         logger.info("Iniciando roteamento", 
                    session_id=state.sessao.get("session_id"),
                    tem_retomada=state.tem_retomada())
+        
+        # 0. 🧠 LÓGICA INTELIGENTE: Preserva dados clínicos ANTES de qualquer roteamento
+        self._preservar_dados_clinicos_se_necessario(state)
         
         # 1. Se há confirmação pendente, vai direto para o subgrafo correto
         if state.tem_pendente():

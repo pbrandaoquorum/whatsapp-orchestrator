@@ -11,6 +11,7 @@ from app.infra.http import LambdaHttpClient
 logger = structlog.get_logger(__name__)
 
 
+
 class EscalaSubgraph:
     """Subgrafo para gestão de escala/presença"""
     
