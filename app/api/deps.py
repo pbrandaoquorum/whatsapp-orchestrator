@@ -11,7 +11,7 @@ from app.infra.http import LambdaHttpClient
 from app.infra.logging import configure_logging
 from app.llm.classifier import IntentClassifier
 from app.llm.extractor import ClinicalExtractor
-from app.graph.rag import RAGSystem
+# from app.graph.rag import RAGSystem  # Comentado para usar mock
 from app.graph.router import MainRouter
 from app.graph.fiscal import FiscalProcessor
 from app.graph.subgraphs.escala import EscalaSubgraph
@@ -56,7 +56,7 @@ class Settings:
         self.extractor_model = os.getenv("EXTRACTOR_MODEL", "gpt-4o-mini")
         
         # DynamoDB
-        self.dynamodb_table_conversas = os.getenv("DYNAMODB_TABLE_CONVERSAS", "Conversas")
+        self.dynamodb_table_conversas = os.getenv("DYNAMODB_TABLE_CONVERSAS", "ConversationStates")
         
         # Logging
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -131,33 +131,37 @@ def get_clinical_extractor() -> ClinicalExtractor:
     return _components["clinical_extractor"]
 
 
-def get_rag_system() -> RAGSystem:
-    """Retorna sistema RAG"""
+def get_rag_system():
+    """Retorna sistema RAG (mock por enquanto)"""
     if "rag_system" not in _components:
-        settings = get_settings()
-        
-        # Verifica se todas as configurações RAG estão presentes
-        if not all([
-            settings.pinecone_api_key,
-            settings.pinecone_environment,
-            settings.pinecone_index,
-            settings.google_sheets_id,
-            os.path.exists(settings.google_credentials_path)
-        ]):
-            logger.warning("Configurações RAG incompletas, RAG será simulado")
-            # Retorna um mock do RAG que não faz nada
-            class MockRAGSystem:
-                def processar_nota_clinica(self, nota: str):
-                    return []
-            _components["rag_system"] = MockRAGSystem()
-        else:
-            _components["rag_system"] = RAGSystem(
-                pinecone_api_key=settings.pinecone_api_key,
-                pinecone_environment=settings.pinecone_environment,
-                pinecone_index_name=settings.pinecone_index,
-                google_credentials_path=settings.google_credentials_path,
-                google_sheets_id=settings.google_sheets_id
-            )
+        logger.warning("Usando mock do RAG para demonstração")
+        # Mock do RAG que simula o comportamento
+        class MockRAGSystem:
+            def processar_nota_clinica(self, nota: str):
+                # Simula identificação de sintomas baseado na nota
+                sintomas_mock = []
+                if nota and len(nota.strip()) > 0:
+                    # Simula alguns sintomas baseados em palavras-chave
+                    if any(word in nota.lower() for word in ['tosse', 'tossir']):
+                        sintomas_mock.append({
+                            "symptomDefinition": "Tosse seca",
+                            "altNotepadMain": nota[:100],
+                            "symptomCategory": "Respiratório",
+                            "symptomSubCategory": "Tosse",
+                            "descricaoComparada": "Identificado via mock RAG",
+                            "coeficienteSimilaridade": 0.85
+                        })
+                    if any(word in nota.lower() for word in ['dor', 'dolorido']):
+                        sintomas_mock.append({
+                            "symptomDefinition": "Dor generalizada",
+                            "altNotepadMain": nota[:100],
+                            "symptomCategory": "Dor",
+                            "symptomSubCategory": "Generalizada",
+                            "descricaoComparada": "Identificado via mock RAG",
+                            "coeficienteSimilaridade": 0.75
+                        })
+                return sintomas_mock
+        _components["rag_system"] = MockRAGSystem()
     return _components["rag_system"]
 
 

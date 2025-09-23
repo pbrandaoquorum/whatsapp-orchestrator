@@ -1,4 +1,4 @@
-.PHONY: install dev test run clean lint
+.PHONY: install dev test run clean lint dynamo-setup dynamo-check
 
 # Instalar dependências
 install:
@@ -54,3 +54,27 @@ test-webhook:
 	curl -X POST "http://localhost:8000/webhook/whatsapp" \
 		-H "Content-Type: application/json" \
 		-d '{"message_id": "test123", "phoneNumber": "5511999999999", "text": "PA 120x80 FC 75", "meta": {}}'
+
+# ===== DYNAMODB =====
+
+# Criar tabelas DynamoDB
+dynamo-setup:
+	@echo "🚀 Criando tabelas DynamoDB..."
+	python scripts/create_dynamo_tables.py
+
+# Verificar status das tabelas DynamoDB
+dynamo-check:
+	@echo "🔍 Verificando tabelas DynamoDB..."
+	python scripts/check_dynamo_tables.py
+
+# Setup completo (dependências + env + tabelas)
+setup-full: setup dynamo-setup
+	@echo "🎉 Setup completo finalizado!"
+	@echo "💡 Próximos passos:"
+	@echo "   1. Configure as variáveis no arquivo .env"
+	@echo "   2. Execute: make run"
+	@echo "   3. Teste: make health"
+
+# Verificar se tudo está funcionando
+check-all: health dynamo-check
+	@echo "✅ Verificação completa do sistema"

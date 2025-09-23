@@ -8,7 +8,7 @@ import structlog
 
 from app.graph.state import GraphState, SymptomReport
 from app.graph.clinical_extractor import extrair_clinico_via_llm
-from app.graph.rag import RAGSystem
+# from app.graph.rag import RAGSystem  # Usando mock no deps
 from app.llm.extractor import ClinicalExtractor
 from app.infra.http import LambdaHttpClient
 
@@ -20,7 +20,7 @@ class ClinicoSubgraph:
     
     def __init__(self, 
                  clinical_extractor: ClinicalExtractor,
-                 rag_system: RAGSystem,
+                 rag_system,  # Mock RAG system
                  http_client: LambdaHttpClient,
                  lambda_update_clinical_url: str):
         self.clinical_extractor = clinical_extractor

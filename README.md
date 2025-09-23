@@ -76,6 +76,19 @@ cp .env.example .env
 # Edite o arquivo .env com suas configurações
 ```
 
+### 4. Crie as tabelas DynamoDB
+
+```bash
+# Opção A: Setup completo (recomendado)
+make setup-full
+
+# Opção B: Apenas tabelas
+make dynamo-setup
+
+# Verificar se tabelas foram criadas
+make dynamo-check
+```
+
 ## 🔧 Configuração
 
 ### Variáveis de Ambiente Obrigatórias
@@ -112,12 +125,25 @@ GOOGLE_CREDENTIALS_PATH=credentials/google-credentials.json
 
 ### DynamoDB - Tabela de Estado
 
-Crie a tabela `Conversas` no DynamoDB:
+O sistema usa uma tabela DynamoDB para persistir o estado das conversações:
 
-- **Partition Key**: `session_id` (String)
+**Tabela: `ConversationStates`**
+- **Partition Key**: `session_id` (String) - ID normalizado do telefone
 - **Attributes**: 
-  - `estado` (Binary) → GraphState serializado
-  - `atualizadoEm` (String) → timestamp ISO
+  - `estado` (Binary) → GraphState serializado em JSON
+  - `atualizadoEm` (String) → timestamp ISO da última atualização
+
+**Criação Automática:**
+```bash
+# Criar tabela automaticamente
+make dynamo-setup
+
+# Verificar status da tabela
+make dynamo-check
+
+# Setup completo (dependências + env + tabelas)
+make setup-full
+```
 
 ## 🏃 Execução
 
@@ -294,9 +320,22 @@ Formato esperado da planilha:
 - Verifique se `.env` existe e contém `OPENAI_API_KEY`, `LAMBDA_GET_SCHEDULE`, etc.
 
 ### Erro: "Tabela DynamoDB não está acessível"
-- Verifique credenciais AWS
-- Confirme que a tabela `Conversas` existe
-- Teste: `curl http://localhost:8000/readyz`
+- Verifique credenciais AWS no `.env`
+- Crie a tabela: `make dynamo-setup`
+- Verifique status: `make dynamo-check`
+- Teste readiness: `curl http://localhost:8000/readyz`
+
+### Problemas com DynamoDB
+```bash
+# Verificar se tabela existe
+make dynamo-check
+
+# Verificar conectividade AWS
+aws dynamodb list-tables --region sa-east-1
+
+# Se necessário, crie a tabela manualmente via AWS Console
+# ou execute: make dynamo-setup
+```
 
 ### LLM retorna JSON inválido
 - O sistema tem retry automático

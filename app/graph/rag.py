@@ -6,7 +6,7 @@ import re
 from typing import List, Dict, Any
 import gspread
 from google.oauth2.service_account import Credentials
-import pinecone
+from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 import structlog
 
@@ -26,9 +26,9 @@ class RAGSystem:
                  google_sheets_id: str,
                  embedding_model: str = "all-MiniLM-L6-v2"):
         
-        # Inicializa Pinecone
-        pinecone.init(api_key=pinecone_api_key, environment=pinecone_environment)
-        self.pinecone_index = pinecone.Index(pinecone_index_name)
+        # Inicializa Pinecone (nova API)
+        pc = Pinecone(api_key=pinecone_api_key)
+        self.pinecone_index = pc.Index(pinecone_index_name)
         
         # Inicializa Google Sheets
         scopes = [
