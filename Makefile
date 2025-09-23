@@ -1,4 +1,4 @@
-.PHONY: install dev test run clean lint dynamo-setup dynamo-check
+.PHONY: install dev test run clean lint dynamo-setup dynamo-check test-prod test-quick
 
 # Instalar dependências
 install:
@@ -54,6 +54,16 @@ test-webhook:
 	curl -X POST "http://localhost:8000/webhook/whatsapp" \
 		-H "Content-Type: application/json" \
 		-d '{"message_id": "test123", "phoneNumber": "5511999999999", "text": "PA 120x80 FC 75", "meta": {}}'
+
+# Testes de produção completos
+test-prod:
+	@echo "🧪 Executando testes de produção..."
+	@python test_production.py
+
+# Testes rápidos com curl
+test-quick:
+	@echo "⚡ Executando testes rápidos..."
+	@./test_quick.sh
 
 # ===== DYNAMODB =====
 

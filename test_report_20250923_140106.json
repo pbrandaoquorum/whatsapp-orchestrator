@@ -1,0 +1,17 @@
+{
+  "total_tests": 8,
+  "passed": 7,
+  "failed": 1,
+  "success_rate": 87.5,
+  "details": {
+    "Health Check": true,
+    "Readiness Check": true,
+    "Fluxo Clínico": false,
+    "Confirmação TPC": true,
+    "Fluxo Escala": true,
+    "Fluxo Operacional": true,
+    "Sistema Ajuda": true,
+    "Casos Extremos LLM": true
+  },
+  "approved": true
+}
