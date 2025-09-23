@@ -23,20 +23,20 @@ class DynamoStateManager:
         self.dynamodb = boto3.client('dynamodb', region_name=aws_region)
         logger.info("DynamoStateManager inicializado", table_name=table_name, region=aws_region)
     
-    def _serialize_state(self, state: GraphState) -> bytes:
-        """Serializa GraphState para JSON usando orjson"""
+    def _serialize_state(self, state: GraphState) -> str:
+        """Serializa GraphState para JSON string usando orjson"""
         try:
-            # Converte para dict e serializa
+            # Converte para dict e serializa como string
             state_dict = state.model_dump()
-            return orjson.dumps(state_dict)
+            return orjson.dumps(state_dict).decode('utf-8')
         except Exception as e:
             logger.error("Erro ao serializar estado", error=str(e))
             raise
     
-    def _deserialize_state(self, data: bytes) -> GraphState:
-        """Deserializa JSON para GraphState"""
+    def _deserialize_state(self, data: str) -> GraphState:
+        """Deserializa JSON string para GraphState"""
         try:
-            state_dict = orjson.loads(data)
+            state_dict = orjson.loads(data.encode('utf-8'))
             return GraphState(**state_dict)
         except Exception as e:
             logger.error("Erro ao deserializar estado", error=str(e))
@@ -63,8 +63,18 @@ class DynamoStateManager:
                 return state
             
             # Deserializa estado existente
-            estado_bytes = response['Item']['estado']['B']
-            state = self._deserialize_state(estado_bytes)
+            # Tenta primeiro como String (S), depois como Binary (B) para compatibilidade
+            if 'S' in response['Item']['estado']:
+                estado_str = response['Item']['estado']['S']
+                state = self._deserialize_state(estado_str)
+            elif 'B' in response['Item']['estado']:
+                # Compatibilidade com versão anterior (Binary)
+                estado_bytes = response['Item']['estado']['B']
+                estado_str = estado_bytes.decode('utf-8') if isinstance(estado_bytes, bytes) else str(estado_bytes)
+                state = self._deserialize_state(estado_str)
+            else:
+                logger.error("Formato de estado não reconhecido", session_id=session_id)
+                raise ValueError("Estado em formato inválido")
             
             logger.info("Estado carregado com sucesso", 
                        session_id=session_id,
@@ -96,7 +106,7 @@ class DynamoStateManager:
             state.sessao["session_id"] = session_id
             
             # Serializa estado
-            estado_bytes = self._serialize_state(state)
+            estado_str = self._serialize_state(state)
             
             # Timestamp atual
             agora = datetime.now(timezone.utc).isoformat()
@@ -106,14 +116,14 @@ class DynamoStateManager:
                 TableName=self.table_name,
                 Item={
                     'session_id': {'S': session_id},
-                    'estado': {'B': estado_bytes},
+                    'estado': {'S': estado_str},  # Mudou de 'B' para 'S' (String)
                     'atualizadoEm': {'S': agora}
                 }
             )
             
             logger.info("Estado salvo com sucesso",
                        session_id=session_id,
-                       tamanho_bytes=len(estado_bytes),
+                       tamanho_bytes=len(estado_str),
                        fluxos_executados=len(state.fluxos_executados))
             
         except ClientError as e:

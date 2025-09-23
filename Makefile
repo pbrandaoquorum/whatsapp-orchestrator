@@ -1,4 +1,4 @@
-.PHONY: install dev test run clean lint dynamo-setup dynamo-check test-prod test-quick
+.PHONY: install dev test run clean lint dynamo-setup dynamo-check test-prod test-quick test-conversation
 
 # Instalar dependências
 install:
@@ -64,6 +64,11 @@ test-prod:
 test-quick:
 	@echo "⚡ Executando testes rápidos..."
 	@./test_quick.sh
+
+# Teste de conversa completa
+test-conversation:
+	@echo "🗣️ Executando teste de conversa completa..."
+	@python test_conversation.py
 
 # ===== DYNAMODB =====
 

@@ -85,6 +85,12 @@ class WhatsAppOrchestrator:
             # 2. Carrega estado
             state = self.dynamo_manager.carregar_estado(session_id)
             
+            # Debug: verifica se pendente foi carregado
+            logger.info("MAIN: Estado carregado", 
+                       session_id=session_id,
+                       tem_pendente=state.tem_pendente(),
+                       pendente_fluxo=state.pendente.get("fluxo") if state.pendente else None)
+            
             # 3. Atualiza entrada
             state.entrada["texto_usuario"] = texto_usuario
             state.entrada["meta"] = meta

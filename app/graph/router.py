@@ -139,7 +139,15 @@ class MainRouter:
                    session_id=state.sessao.get("session_id"),
                    tem_retomada=state.tem_retomada())
         
-        # 1. Se há retomada, pula classificação e despacha direto
+        # 1. Se há confirmação pendente, vai direto para o subgrafo correto
+        if state.tem_pendente():
+            fluxo_pendente = state.pendente["fluxo"]
+            logger.info("ROUTER: Confirmação pendente detectada", 
+                       fluxo=fluxo_pendente,
+                       session_id=state.sessao.get("session_id"))
+            return fluxo_pendente
+        
+        # 2. Se há retomada, pula classificação e despacha direto
         if state.tem_retomada():
             fluxo_retomada = state.retomada["fluxo"]
             motivo = state.retomada.get("motivo", "")
@@ -149,24 +157,24 @@ class MainRouter:
             state.retomada = None
             return fluxo_retomada
         
-        # 2. Verifica se precisa buscar dados da sessão
+        # 3. Verifica se precisa buscar dados da sessão
         if not self._verificar_dados_sessao(state):
             logger.info("Dados da sessão faltando, chamando getScheduleStarted")
             self._chamar_get_schedule_started(state)
         
-        # 3. Classifica intenção via LLM
+        # 4. Classifica intenção via LLM
         intencao = self._classificar_intencao(state)
         
-        # 4. Aplica gates determinísticos
+        # 5. Aplica gates determinísticos
         intencao_final = self._aplicar_gates_deterministicos(state, intencao)
         
-        # 5. Log do resultado final
+        # 6. Log do resultado final
         if intencao != intencao_final:
             logger.info("Intenção modificada por gates",
                        intencao_original=intencao,
                        intencao_final=intencao_final)
         
-        # 6. Atualiza estado
+        # 7. Atualiza estado
         state.roteador["intencao"] = intencao_final
         
         logger.info("Roteamento concluído",
