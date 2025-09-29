@@ -130,6 +130,41 @@ class LambdaHttpClient:
         
         return result
     
+    def get_note_report(self, url: str, report_id: str, report_date: str) -> Dict[str, Any]:
+        """Chama getNoteReport Lambda"""
+        payload = {
+            "reportID": report_id,
+            "reportDate": report_date
+        }
+        
+        logger.info("Chamando getNoteReport",
+                   report_id=report_id,
+                   report_date=report_date)
+        
+        result = self._make_request('POST', url, json=payload)
+        
+        logger.info("getNoteReport concluído",
+                   report_id=report_id,
+                   notes_count=len(result.get('notes', [])),
+                   success=True)
+        
+        return result
+    
+    def update_report_summary(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Chama updatereportsummaryad Lambda"""
+        logger.info("Chamando updatereportsummaryad",
+                   report_id=payload.get('reportID'),
+                   schedule_id=payload.get('scheduleID'),
+                   payload_keys=list(payload.keys()))
+        
+        result = self._make_request('POST', url, json=payload)
+        
+        logger.info("updatereportsummaryad concluído",
+                   report_id=payload.get('reportID'),
+                   success=True)
+        
+        return result
+    
     def post(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Método genérico POST para webhooks (n8n, etc.)

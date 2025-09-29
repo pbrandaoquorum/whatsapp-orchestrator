@@ -60,6 +60,31 @@ class GraphState(BaseModel):
         "tipo": None  # "instantanea"
     })
     
+    # Dados de finalização
+    finalizacao: Dict[str, Any] = Field(default_factory=lambda: {
+        "notas_existentes": [],  # notas recuperadas do getNoteReport
+        "topicos": {
+            "alimentacao_hidratacao": None,
+            "evacuacoes": None,
+            "sono": None,
+            "humor": None,
+            "medicacoes": None,
+            "atividades": None,
+            "informacoes_clinicas_adicionais": None,
+            "informacoes_administrativas": None
+        },
+        "faltantes": [
+            "alimentacao_hidratacao",
+            "evacuacoes", 
+            "sono",
+            "humor",
+            "medicacoes",
+            "atividades",
+            "informacoes_clinicas_adicionais",
+            "informacoes_administrativas"
+        ]
+    })
+    
     # Estado de retomada
     retomada: Optional[Dict[str, Any]] = None  # {"fluxo":"finalizar","motivo":"precisa_vitais"}
     

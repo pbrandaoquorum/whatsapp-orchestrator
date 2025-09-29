@@ -40,6 +40,7 @@ class Settings:
         self.lambda_update_schedule = os.getenv("LAMBDA_UPDATE_SCHEDULE")
         self.lambda_update_clinical = os.getenv("LAMBDA_UPDATE_CLINICAL")
         self.lambda_update_summary = os.getenv("LAMBDA_UPDATE_SUMMARY")
+        self.lambda_get_note_report = os.getenv("LAMBDA_GET_NOTE_REPORT")
         
         # Pinecone
         self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
@@ -242,6 +243,7 @@ def get_finalizar_subgraph() -> FinalizarSubgraph:
         settings = get_settings()
         _components["finalizar_subgraph"] = FinalizarSubgraph(
             http_client=get_http_client(),
+            lambda_get_note_report_url=settings.lambda_get_note_report,
             lambda_update_summary_url=settings.lambda_update_summary
         )
     return _components["finalizar_subgraph"]

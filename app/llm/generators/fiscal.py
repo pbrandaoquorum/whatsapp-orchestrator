@@ -141,6 +141,10 @@ CÓDIGOS DE RESULTADO (prioridade máxima):
 - "CLINICAL_DATA_SAVED": Dados salvos com sucesso → "Dados clínicos salvos com sucesso! Se precisar de algo mais, estou à disposição."
 - "CLINICAL_DATA_CANCELLED": Usuário cancelou → Informe que cancelou e pergunte se quer tentar novamente
 - "CLINICAL_DATA_READY_FOR_CONFIRMATION": Dados completos → Apresente resumo e peça confirmação
+- "FINALIZATION_PARTIAL_DATA": Dados parciais de finalização → Informe o que foi coletado e peça tópicos faltantes
+- "FINALIZATION_READY_FOR_CONFIRMATION": Dados completos → Apresente resumo de finalização e peça confirmação
+- "FINALIZATION_COMPLETED": Finalização concluída → "Plantão finalizado com sucesso! Obrigado pelo seu trabalho."
+- "FINALIZATION_CANCELLED": Finalização cancelada → "Finalização cancelada. Posso ajudar com mais alguma coisa?"
 
 STATUS DO PLANTÃO:
 - "confirmado": Plantão confirmado - permite updates de dados clínicos
@@ -165,6 +169,7 @@ NUNCA:
         # Extrai informações principais com validação
         sessao = estado.get("sessao") or {}
         clinico = estado.get("clinico") or {}
+        finalizacao = estado.get("finalizacao") or {}
         pendente = estado.get("pendente") or {}
         retomada = estado.get("retomada") or {}
         fluxos_executados = estado.get("fluxos_executados") or []
@@ -172,6 +177,7 @@ NUNCA:
         logger.debug("Formatando contexto", 
                     tem_sessao=bool(sessao),
                     tem_clinico=bool(clinico),
+                    tem_finalizacao=bool(finalizacao),
                     tem_pendente=bool(pendente))
         
         # Vitais coletados
@@ -198,6 +204,12 @@ DADOS CLÍNICOS:
 - Nota clínica: {f'"{clinico.get("nota")}"' if clinico.get('nota') else 'Não informada'}
 - Dados completos: {bool(vitais_coletados and clinico.get('supplementaryOxygen') and clinico.get('nota'))}
 - RAG: Processado via webhook n8n
+
+DADOS DE FINALIZAÇÃO:
+- Notas existentes: {len(finalizacao.get('notas_existentes', []))}
+- Tópicos preenchidos: {len([t for t in finalizacao.get('topicos', {}).values() if t is not None])}
+- Tópicos faltantes: {', '.join(finalizacao.get('faltantes', [])) if finalizacao.get('faltantes') else 'Nenhum'}
+- Finalização completa: {len(finalizacao.get('faltantes', [])) == 0}
 
 RETOMADA:
 - Tem retomada: {bool(retomada)}

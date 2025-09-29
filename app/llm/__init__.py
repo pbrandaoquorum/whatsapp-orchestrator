@@ -10,7 +10,8 @@ Estrutura organizada por responsabilidade:
 └── OperationalNoteClassifier: Detecta notas operacionais instantâneas
 
 🔍 EXTRACTORS - Extração estruturada de dados  
-└── ClinicalExtractor: Extrai sinais vitais, notas e condições respiratórias
+├── ClinicalExtractor: Extrai sinais vitais, notas e condições respiratórias
+└── FinalizacaoExtractor: Extrai tópicos de finalização de plantão
 
 🎭 GENERATORS - Geração de conteúdo dinâmico
 └── FiscalLLM: Gera respostas contextuais para o usuário
@@ -20,7 +21,7 @@ Todos os módulos usam OpenAI GPT-4o-mini com temperature=0 para determinismo.
 
 # Imports organizados por categoria
 from .classifiers import IntentClassifier, ConfirmationClassifier, OperationalNoteClassifier
-from .extractors import ClinicalExtractor
+from .extractors import ClinicalExtractor, FinalizacaoExtractor
 from .generators import FiscalLLM
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     
     # Extratores
     "ClinicalExtractor",
+    "FinalizacaoExtractor",
     
     # Geradores
     "FiscalLLM"

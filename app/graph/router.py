@@ -71,6 +71,7 @@ class MainRouter:
                 "data_relatorio": result.get("reportDate"),
                 "response": result.get("response"),  # Status do plantão
                 "shift_allow": shift_allow,  # True/False do backend
+                "finish_reminder_sent": result.get("finishReminderSent", False),  # Flag para finalização
                 "empresa": result.get("company"),
                 "cooperativa": result.get("cooperative")
             })
@@ -143,7 +144,13 @@ class MainRouter:
                            intencao_original=intencao, response=response)
             return "escala"
         
-        # Gate 4: Se intenção é finalizar mas vitais incompletos -> clinico
+        # Gate 4: Se finishReminderSent=true -> direciona para finalizar (exceto se já for finalizar)
+        if sessao.get("finish_reminder_sent", False) and intencao != "finalizar":
+            logger.info("Lembrete de finalização enviado, direcionando para finalizar",
+                       intencao_original=intencao)
+            return "finalizar"
+        
+        # Gate 5: Se intenção é finalizar mas vitais incompletos -> clinico
         if intencao == "finalizar":
             vitais_completos = state.get_vitais_completos()
             if not vitais_completos:
