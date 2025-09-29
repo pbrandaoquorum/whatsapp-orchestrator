@@ -31,7 +31,7 @@ class EscalaSubgraph:
         """
         try:
             # Usar LLM para classificar ação
-            from app.llm.confirmation_classifier import ConfirmationClassifier
+            from app.llm.classifiers import ConfirmationClassifier
             import os
             
             api_key = os.getenv("OPENAI_API_KEY")
@@ -150,8 +150,14 @@ class EscalaSubgraph:
                 )
                 state.sessao.update({
                     "schedule_id": bootstrap_result.get("scheduleID"),
-                    "turno_permitido": bootstrap_result.get("turnoPermitido", True),
-                    "turno_iniciado": bootstrap_result.get("turnoIniciado", False)
+                    "shift_allow": bootstrap_result.get("shiftAllow", True),
+                    "response": bootstrap_result.get("response", "aguardando resposta"),
+                    "caregiver_id": bootstrap_result.get("caregiverID"),
+                    "patient_id": bootstrap_result.get("patientID"),
+                    "report_id": bootstrap_result.get("reportID"),
+                    "data_relatorio": bootstrap_result.get("reportDate"),
+                    "empresa": bootstrap_result.get("company"),
+                    "cooperativa": bootstrap_result.get("cooperative")
                 })
             except Exception as e:
                 logger.warning("Erro no re-bootstrap após ação de escala", error=str(e))
@@ -187,7 +193,7 @@ class EscalaSubgraph:
         if state.tem_pendente() and state.pendente.get("fluxo") == "escala":
             try:
                 # Usar LLM para classificar confirmação
-                from app.llm.confirmation_classifier import ConfirmationClassifier
+                from app.llm.classifiers import ConfirmationClassifier
                 import os
                 
                 api_key = os.getenv("OPENAI_API_KEY")

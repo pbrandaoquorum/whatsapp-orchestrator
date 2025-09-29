@@ -6,7 +6,7 @@ from typing import Dict, Any
 import structlog
 
 from app.graph.state import GraphState
-from app.llm.classifier import IntentClassifier
+from app.llm.classifiers import IntentClassifier, OperationalNoteClassifier
 from app.infra.http import LambdaHttpClient
 
 logger = structlog.get_logger(__name__)
@@ -17,9 +17,11 @@ class MainRouter:
     
     def __init__(self, 
                  intent_classifier: IntentClassifier,
+                 operational_classifier: OperationalNoteClassifier,
                  http_client: LambdaHttpClient,
                  lambda_get_schedule_url: str):
         self.intent_classifier = intent_classifier
+        self.operational_classifier = operational_classifier
         self.http_client = http_client
         self.lambda_get_schedule_url = lambda_get_schedule_url
         logger.info("MainRouter inicializado")
@@ -67,10 +69,8 @@ class MainRouter:
                 "patient_id": result.get("patientID"),
                 "caregiver_id": result.get("caregiverID"),
                 "data_relatorio": result.get("reportDate"),
-                "turno_permitido": turno_realmente_permitido,  # Lógica corrigida
-                "turno_iniciado": result.get("scheduleStarted", False),
                 "response": result.get("response"),  # Status do plantão
-                "shift_allow": shift_allow,  # Valor original para debug
+                "shift_allow": shift_allow,  # True/False do backend
                 "empresa": result.get("company"),
                 "cooperativa": result.get("cooperative")
             })
@@ -83,13 +83,12 @@ class MainRouter:
                        caregiver_id=state.sessao.get("caregiver_id"),
                        shift_allow=shift_allow,
                        response_status=response_status,
-                       turno_permitido=turno_realmente_permitido,
-                       turno_iniciado=state.sessao.get("turno_iniciado"))
+                       empresa=state.sessao.get("empresa"))
             
             logger.info("Lógica de permissão aplicada",
                        shift_allow_original=shift_allow,
                        response=response_status,
-                       turno_permitido_final=turno_realmente_permitido,
+                       plantao_confirmado=self._plantao_confirmado(state),
                        formula="shiftAllow AND response=='confirmado'")
             
         except Exception as e:
@@ -123,9 +122,9 @@ class MainRouter:
         """
         sessao = state.sessao
         
-        # Gate 1: Se cancelado -> auxiliar
-        if sessao.get("cancelado"):
-            logger.info("Sessão cancelada, redirecionando para auxiliar")
+        # Gate 1: Se plantão cancelado -> auxiliar  
+        if sessao.get("response") == "cancelado":
+            logger.info("Plantão cancelado, redirecionando para auxiliar")
             return "auxiliar"
         
         # Gate 2: Se turno não permitido por falta de plantão -> auxiliar
@@ -180,8 +179,8 @@ class MainRouter:
             # Preservação silenciosa de dados clínicos
             
             # Import dinâmico para evitar dependências circulares
-            from app.graph.clinical_extractor import extrair_clinico_via_llm
-            from app.llm.extractor import ClinicalExtractor
+            # Extração clínica consolidada no ClinicalExtractor
+            from app.llm.extractors import ClinicalExtractor
             import os
             
             # Criar extrator
@@ -195,7 +194,7 @@ class MainRouter:
             )
             
             # Extrair dados clínicos
-            resultado_extracao = extrair_clinico_via_llm(texto_usuario, extractor)
+            resultado_extracao = extractor.extrair_clinico_completo(texto_usuario)
             
             # Verificar se encontrou dados relevantes
             vitais_encontrados = {}
@@ -232,6 +231,36 @@ class MainRouter:
         except Exception as e:
             logger.error("Erro ao preservar dados clínicos no router", error=str(e))
     
+    def _verificar_nota_operacional(self, state: GraphState) -> bool:
+        """
+        Verifica se o texto contém uma nota operacional que deve ser enviada instantaneamente
+        """
+        try:
+            texto_usuario = state.entrada.get("texto_usuario", "")
+            if not texto_usuario:
+                return False
+            
+            is_operational, operational_note = self.operational_classifier.is_operational_note(texto_usuario)
+            
+            if is_operational and operational_note:
+                # Armazena a nota operacional no estado para processamento
+                state.operacional = {
+                    "nota": operational_note,
+                    "timestamp": state.entrada.get("timestamp"),
+                    "tipo": "instantanea"
+                }
+                
+                logger.info("Nota operacional detectada", 
+                           nota=operational_note[:100],
+                           session_id=state.sessao.get("session_id"))
+                return True
+                
+            return False
+            
+        except Exception as e:
+            logger.error("Erro ao verificar nota operacional", error=str(e))
+            return False
+    
     def rotear(self, state: GraphState) -> str:
         """
         Executa roteamento completo
@@ -245,6 +274,11 @@ class MainRouter:
         
         # 0. 🧠 LÓGICA INTELIGENTE: Preserva dados clínicos ANTES de qualquer roteamento
         self._preservar_dados_clinicos_se_necessario(state)
+        
+        # 0.5. 🚨 NOTAS OPERACIONAIS: Verifica se há nota operacional para envio instantâneo
+        nota_operacional = self._verificar_nota_operacional(state)
+        if nota_operacional:
+            return "operacional"  # Redireciona para subgrafo operacional
         
         # 1. Se há confirmação pendente, vai direto para o subgrafo correto
         if state.tem_pendente():

@@ -25,13 +25,14 @@ class FiscalLLM:
         self.client = OpenAI(api_key=api_key)
         self.model = model
     
-    def gerar_resposta(self, estado_atual: Dict[str, Any], entrada_usuario: str) -> str:
+    def gerar_resposta(self, estado_atual: Dict[str, Any], entrada_usuario: str, codigo_resultado: str = None) -> str:
         """
         Gera resposta contextual baseada no estado atual via LLM
         
         Args:
             estado_atual: Estado completo do DynamoDB
             entrada_usuario: Última mensagem do usuário
+            codigo_resultado: Código de resultado do subgrafo executado (opcional)
             
         Returns:
             Resposta curta e contextual para o usuário
@@ -50,7 +51,7 @@ class FiscalLLM:
         system_prompt = self._criar_system_prompt()
         
         # Contexto do estado atual
-        contexto_estado = self._formatar_contexto_estado(estado_atual)
+        contexto_estado = self._formatar_contexto_estado(estado_atual, codigo_resultado)
         
         # User prompt
         user_prompt = f"""ESTADO ATUAL DO SISTEMA:
@@ -122,8 +123,24 @@ DADOS PARCIAIS:
 - Exemplo: "Salvei PA e FC. Preciso de FR, Sat, Temp, condição respiratória e nota clínica."
 
 DADOS COMPLETOS:
-- Confirme especificamente o que será processado
-- Exemplo: "Confirma salvar: PA 120x80, FC 75, nota: sem alterações?"
+- Quando todos os dados clínicos estão coletados (vitais + condição respiratória + nota clínica)
+- SEMPRE apresente um resumo completo e peça confirmação explícita
+- Formato: "Coletei: [lista de vitais], condição respiratória [valor], nota clínica: [valor]. Confirma para salvar?"
+- NUNCA pergunte se quer adicionar mais - apenas confirme o salvamento
+- Exemplo: "Coletei: PA 120x80, FC 75, FR 18, Sat 97, Temp 36.5, condição respiratória: ar ambiente, nota: sem alterações. Confirma para salvar?"
+
+DADOS SALVOS COM SUCESSO:
+- Quando o código de resultado é "CLINICAL_DATA_SAVED"
+- Significa que os dados foram confirmados e enviados para o sistema com sucesso
+- Estado clínico foi limpo automaticamente após o envio
+- Confirme o salvamento e se coloque à disposição
+- Formato: "Dados clínicos salvos com sucesso! Se precisar de algo mais, estou à disposição."
+- NUNCA peça novos dados ou mencione faltantes após código CLINICAL_DATA_SAVED
+
+CÓDIGOS DE RESULTADO (prioridade máxima):
+- "CLINICAL_DATA_SAVED": Dados salvos com sucesso → "Dados clínicos salvos com sucesso! Se precisar de algo mais, estou à disposição."
+- "CLINICAL_DATA_CANCELLED": Usuário cancelou → Informe que cancelou e pergunte se quer tentar novamente
+- "CLINICAL_DATA_READY_FOR_CONFIRMATION": Dados completos → Apresente resumo e peça confirmação
 
 STATUS DO PLANTÃO:
 - "confirmado": Plantão confirmado - permite updates de dados clínicos
@@ -137,7 +154,7 @@ NUNCA:
 - Seja verboso ou repetitivo
 - Permita updates quando plantão não confirmado"""
 
-    def _formatar_contexto_estado(self, estado: Dict[str, Any]) -> str:
+    def _formatar_contexto_estado(self, estado: Dict[str, Any], codigo_resultado: str = None) -> str:
         """Formata o estado atual para o LLM de forma estruturada"""
         
         # Valida estado
@@ -178,11 +195,15 @@ DADOS CLÍNICOS:
 - Vitais coletados: {', '.join([f'{k}={v}' for k, v in vitais_coletados.items()]) if vitais_coletados else 'Nenhum'}
 - Vitais faltantes: {', '.join(vitais_faltantes) if vitais_faltantes else 'Nenhum'}
 - Condição respiratória: {clinico.get('supplementaryOxygen') or 'Não informada'}
-- Nota clínica: {'Sim' if clinico.get('nota') else 'Não'}
-- Sintomas: {len(clinico.get('sintomas', []))} identificados
+- Nota clínica: {f'"{clinico.get("nota")}"' if clinico.get('nota') else 'Não informada'}
+- Dados completos: {bool(vitais_coletados and clinico.get('supplementaryOxygen') and clinico.get('nota'))}
+- RAG: Processado via webhook n8n
 
 RETOMADA:
 - Tem retomada: {bool(retomada)}
-- Fluxo retomada: {retomada.get('fluxo', 'Nenhum')}"""
+- Fluxo retomada: {retomada.get('fluxo', 'Nenhum')}
+
+RESULTADO SUBGRAFO:
+- Código: {codigo_resultado or 'Nenhum'}"""
 
         return contexto

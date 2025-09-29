@@ -7,7 +7,7 @@ import structlog
 from typing import Optional
 
 from app.graph.state import GraphState
-from app.llm.fiscal_llm import FiscalLLM
+from app.llm.generators import FiscalLLM
 from app.infra.dynamo_state import DynamoStateManager
 
 logger = structlog.get_logger(__name__)
@@ -89,13 +89,14 @@ class FiscalProcessor:
         else:
             return "Sistema em modo básico. Funcionalidades limitadas."
     
-    def processar_resposta_fiscal(self, session_id: str, entrada_usuario: str) -> str:
+    def processar_resposta_fiscal(self, session_id: str, entrada_usuario: str, codigo_resultado: str = None) -> str:
         """
         Processa resposta fiscal final - SEMPRE lê estado do DynamoDB
         
         Args:
             session_id: ID da sessão para buscar no DynamoDB
             entrada_usuario: Última mensagem do usuário
+            codigo_resultado: Código de resultado do subgrafo executado (opcional)
         
         Returns:
             Resposta contextual e dinâmica gerada via LLM
@@ -121,7 +122,7 @@ class FiscalProcessor:
         if self.fiscal_llm:
             logger.info("Tentando gerar resposta via LLM", session_id=session_id)
             try:
-                resposta = self.fiscal_llm.gerar_resposta(estado_atual, entrada_usuario)
+                resposta = self.fiscal_llm.gerar_resposta(estado_atual, entrada_usuario, codigo_resultado)
                 
                 logger.info("Resposta gerada via LLM com sucesso",
                            session_id=session_id,

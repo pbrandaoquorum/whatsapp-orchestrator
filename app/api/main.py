@@ -121,7 +121,7 @@ class WhatsAppOrchestrator:
             self.dynamo_manager.salvar_estado(session_id, state)
             
             # 7. Fiscal lê estado do DynamoDB e gera resposta via LLM
-            resposta_final = self.fiscal.processar_resposta_fiscal(session_id, texto_usuario)
+            resposta_final = self.fiscal.processar_resposta_fiscal(session_id, texto_usuario, resultado_subgrafo)
             
             # 8. Salva resposta fiscal no estado
             state.resposta_fiscal = resposta_final

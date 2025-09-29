@@ -9,9 +9,9 @@ import structlog
 from app.infra.dynamo_state import DynamoStateManager
 from app.infra.http import LambdaHttpClient
 from app.infra.logging import configure_logging
-from app.llm.classifier import IntentClassifier
-from app.llm.extractor import ClinicalExtractor
-# from app.graph.rag import RAGSystem  # Comentado para usar mock
+from app.llm.classifiers import IntentClassifier, OperationalNoteClassifier
+from app.llm.extractors import ClinicalExtractor
+# RAG desabilitado - processamento via webhook n8n
 from app.graph.router import MainRouter
 from app.graph.fiscal import FiscalProcessor
 from app.graph.subgraphs.escala import EscalaSubgraph
@@ -165,12 +165,23 @@ def get_rag_system():
     return _components["rag_system"]
 
 
+def get_operational_classifier() -> OperationalNoteClassifier:
+    """Retorna classificador operacional"""
+    if "operational_classifier" not in _components:
+        settings = get_settings()
+        _components["operational_classifier"] = OperationalNoteClassifier(
+            api_key=settings.openai_api_key
+        )
+    return _components["operational_classifier"]
+
+
 def get_main_router() -> MainRouter:
     """Retorna router principal"""
     if "main_router" not in _components:
         settings = get_settings()
         _components["main_router"] = MainRouter(
             intent_classifier=get_intent_classifier(),
+            operational_classifier=get_operational_classifier(),
             http_client=get_http_client(),
             lambda_get_schedule_url=settings.lambda_get_schedule
         )

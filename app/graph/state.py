@@ -27,11 +27,11 @@ class GraphState(BaseModel):
         "patient_id": None,
         "report_id": None,
         "data_relatorio": None,
-        "turno_permitido": None,
-        "turno_iniciado": None,
         "empresa": None,
         "cooperativa": None,
-        "cancelado": False
+        # Campos do getScheduleStarted
+        "response": None,  # "confirmado", "aguardando resposta", "cancelado"
+        "shift_allow": None  # True/False do backend
     })
     
     # Entrada do usuário
@@ -42,8 +42,7 @@ class GraphState(BaseModel):
     
     # Resultado do roteador
     roteador: Dict[str, Any] = Field(default_factory=lambda: {
-        "intencao": None,
-        "subintencao_clinico": None
+        "intencao": None
     })
     
     # Dados clínicos
@@ -51,8 +50,14 @@ class GraphState(BaseModel):
         "vitais": {},  # {"PA":"120x80","FC":78,"FR":18,"Sat":97,"Temp":36.8}
         "faltantes": [],  # ["FR","Sat"]
         "nota": None,  # texto livre
-        "supplementaryOxygen": None,  # "Ar ambiente", "Ventilação mecânica", "Oxigênio suplementar"
-        "sintomas": []  # List[SymptomReport] (serialize)
+        "supplementaryOxygen": None  # "Ar ambiente", "Ventilação mecânica", "Oxigênio suplementar"
+    })
+    
+    # Dados operacionais
+    operacional: Dict[str, Any] = Field(default_factory=lambda: {
+        "nota": None,  # nota operacional instantânea
+        "timestamp": None,  # timestamp da nota
+        "tipo": None  # "instantanea"
     })
     
     # Estado de retomada

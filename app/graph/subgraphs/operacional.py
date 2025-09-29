@@ -22,23 +22,25 @@ class OperacionalSubgraph:
         self.lambda_update_clinical_url = lambda_update_clinical_url
         logger.info("OperacionalSubgraph inicializado")
     
-    def _preparar_payload_note_only(self, state: GraphState) -> Dict[str, Any]:
-        """Prepara payload para NOTE_ONLY"""
+    def _preparar_payload_operacional(self, state: GraphState) -> Dict[str, Any]:
+        """Prepara payload para nota operacional instantânea"""
         sessao = state.sessao
-        texto_usuario = state.entrada.get("texto_usuario", "")
+        nota_operacional = state.operacional.get("nota", "")
         
         payload = {
             "reportID": sessao.get("report_id"),
             "reportDate": sessao.get("data_relatorio"),
             "scheduleID": sessao.get("schedule_id"),
-            "caregiverID": sessao.get("caregiver_id"),
-            "patientID": sessao.get("patient_id"),
-            "clinicalNote": texto_usuario  # Nota administrativa
+            "sessionID": sessao.get("session_id"),
+            "caregiverIdentifier": sessao.get("caregiver_id"),
+            "patientIdentifier": sessao.get("patient_id"),
+            "clinicalNote": nota_operacional,
+            "operationalNote": True  # Flag para identificar nota operacional
         }
         
-        logger.debug("Payload NOTE_ONLY preparado",
+        logger.debug("Payload operacional preparado",
                     report_id=sessao.get("report_id"),
-                    nota_length=len(texto_usuario))
+                    nota_length=len(nota_operacional))
         
         return payload
     
@@ -47,36 +49,43 @@ class OperacionalSubgraph:
         Processa subgrafo operacional
         
         Diferente dos outros, este fluxo é DIRETO (sem confirmação)
-        Envia NOTE_ONLY para updateClinicalData
+        Envia nota operacional instantânea para webhook n8n
         
         Returns:
-            Mensagem para ser processada pelo fiscal
+            Código para ser processado pelo fiscal
         """
         logger.info("Processando subgrafo operacional")
         
         # Adiciona à lista de fluxos executados
         state.adicionar_fluxo_executado("operacional")
         
-        texto_usuario = state.entrada.get("texto_usuario", "")
+        nota_operacional = state.operacional.get("nota", "") or ""
         
-        if not texto_usuario.strip():
-            return "Nenhuma nota administrativa foi fornecida."
+        if not nota_operacional.strip():
+            return "OPERATIONAL_NO_NOTE"
         
-        # Prepara payload
-        payload = self._preparar_payload_note_only(state)
+        # Prepara payload para webhook n8n
+        payload = self._preparar_payload_operacional(state)
         
         try:
-            logger.info("Enviando nota operacional diretamente")
+            logger.info("Enviando nota operacional instantânea para n8n")
             
-            # Chama Lambda diretamente (sem confirmação)
-            result = self.http_client.update_clinical_data(
-                self.lambda_update_clinical_url,
-                payload
-            )
+            # URL do webhook n8n (mesmo usado no clínico)
+            webhook_url = "https://primary-production-031c.up.railway.app/webhook/8f70cfe8-9c88-403d-8282-0d9bd7b4311d"
             
-            logger.info("Nota operacional enviada com sucesso")
-            return f"Nota administrativa registrada: '{texto_usuario[:50]}{'...' if len(texto_usuario) > 50 else ''}'"
+            # Chama webhook n8n diretamente (sem confirmação)
+            result = self.http_client.post(webhook_url, payload)
+            
+            # Limpa dados operacionais após envio bem-sucedido
+            state.operacional = {
+                "nota": None,
+                "timestamp": None,
+                "tipo": None
+            }
+            
+            logger.info("Nota operacional enviada para n8n com sucesso")
+            return "OPERATIONAL_NOTE_SENT"
             
         except Exception as e:
-            logger.error("Erro ao enviar nota operacional", error=str(e))
-            return f"Erro ao registrar nota administrativa: {str(e)}"
+            logger.error("Erro ao enviar nota operacional para n8n", error=str(e))
+            return "OPERATIONAL_ERROR"

@@ -22,7 +22,7 @@ class AuxiliarSubgraph:
         """
         # Usar LLM para classificar tipo de ajuda (sem keywords)
         try:
-            from app.llm.confirmation_classifier import ConfirmationClassifier
+            from app.llm.classifiers import ConfirmationClassifier
             import os
             
             api_key = os.getenv("OPENAI_API_KEY")

@@ -7,9 +7,9 @@ from typing import Dict, Any, List
 import structlog
 
 from app.graph.state import GraphState, SymptomReport
-from app.graph.clinical_extractor import extrair_clinico_via_llm
-# from app.graph.rag import RAGSystem  # Usando mock no deps
-from app.llm.extractor import ClinicalExtractor
+# Extração clínica consolidada no ClinicalExtractor
+# RAG desabilitado - processamento via webhook n8n
+from app.llm.extractors import ClinicalExtractor
 from app.infra.http import LambdaHttpClient
 
 logger = structlog.get_logger(__name__)
@@ -36,7 +36,7 @@ class ClinicoSubgraph:
         logger.info("Extraindo dados clínicos", texto=texto_usuario[:100])
         
         # Chama extrator clínico
-        resultado = extrair_clinico_via_llm(texto_usuario, self.clinical_extractor)
+        resultado = self.clinical_extractor.extrair_clinico_completo(texto_usuario)
         
         # CORREÇÃO: Mescla vitais em vez de sobrescrever
         vitais_existentes = state.clinico.get("vitais", {})
@@ -53,8 +53,8 @@ class ClinicoSubgraph:
         if resultado["nota"]:
             state.clinico["nota"] = resultado["nota"]
         
-        # Atualiza condição respiratória se presente
-        if resultado.get("supplementaryOxygen"):
+        # Atualiza condição respiratória (apenas se não for None - preserva valor anterior)
+        if "supplementaryOxygen" in resultado and resultado["supplementaryOxygen"] is not None:
             state.clinico["supplementaryOxygen"] = resultado["supplementaryOxygen"]
         
         # Recalcula faltantes baseado nos vitais mesclados
@@ -102,9 +102,8 @@ class ClinicoSubgraph:
         #     logger.error("Erro no processamento RAG", nota=nota[:50], error=str(e))
         #     state.clinico["sintomas"] = []
         
-        # RAG agora é processado pelo webhook n8n
+        # RAG desabilitado - processamento via webhook n8n
         logger.info("RAG será processado pelo webhook n8n - pulando processamento local")
-        state.clinico["sintomas"] = []
     
     def _preparar_payload_clinical(self, state: GraphState) -> Dict[str, Any]:
         """COMENTADO - Prepara payload para updateClinicalData (agora usa webhook n8n)"""
@@ -313,14 +312,28 @@ class ClinicoSubgraph:
             # Chama webhook n8n
             result = self.http_client.post(webhook_url, payload)
             
-            # Limpa pendente
+            # Limpa pendente e dados clínicos após envio bem-sucedido
             state.limpar_pendente()
+            self._limpar_dados_clinicos(state)
             
-            logger.info("Dados enviados para n8n com sucesso")
+            logger.info("Dados enviados para n8n com sucesso e estado clínico limpo")
             
         except Exception as e:
             logger.error("Erro ao enviar dados para n8n", error=str(e))
             state.limpar_pendente()
+    
+    def _limpar_dados_clinicos(self, state: GraphState):
+        """
+        Limpa os dados clínicos do estado após envio bem-sucedido
+        """
+        # Reseta todos os campos clínicos para valores padrão
+        state.clinico = {
+            "vitais": {},
+            "faltantes": ["PA", "FC", "FR", "Sat", "Temp"],
+            "nota": None,
+            "supplementaryOxygen": None
+        }
+        logger.info("Dados clínicos limpos do estado")
     
     def processar(self, state: GraphState) -> str:
         """
@@ -346,7 +359,7 @@ class ClinicoSubgraph:
         if state.tem_pendente() and state.pendente.get("fluxo") == "clinico":
             try:
                 # Usar LLM para classificar confirmação
-                from app.llm.confirmation_classifier import ConfirmationClassifier
+                from app.llm.classifiers import ConfirmationClassifier
                 import os
                 
                 api_key = os.getenv("OPENAI_API_KEY")

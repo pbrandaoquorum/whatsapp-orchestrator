@@ -106,7 +106,7 @@ class FinalizarSubgraph:
         if state.tem_pendente() and state.pendente.get("fluxo") == "finalizar":
             try:
                 # Usar LLM para classificar confirmação
-                from app.llm.confirmation_classifier import ConfirmationClassifier
+                from app.llm.classifiers import ConfirmationClassifier
                 import os
                 
                 api_key = os.getenv("OPENAI_API_KEY")

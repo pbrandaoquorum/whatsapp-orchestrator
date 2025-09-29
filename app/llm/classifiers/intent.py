@@ -26,7 +26,7 @@ TEXTO DO USUÁRIO: "{texto_usuario}"
 
 INTENÇÕES POSSÍVEIS:
 - escala: Confirmar presença, cancelar plantão, questões sobre horário/escala
-- clinico: Enviar sinais vitais (PA, FC, FR, Saturação, Temperatura) ou notas clínicas
+- clinico: Enviar sinais vitais (PA, FC, FR, Saturação, Temperatura), notas clínicas, condições respiratórias (ar ambiente, oxigênio, ventilação)
 - operacional: Notas administrativas, observações gerais sem dados clínicos
 - finalizar: Finalizar plantão, encerrar atendimento
 - auxiliar: Dúvidas, ajuda, saudações, outros assuntos
@@ -41,6 +41,18 @@ Entrada: "Confirmando presença"
 Saída: {{"intencao": "escala"}}
 
 Entrada: "PA 120x80 FC 75"
+Saída: {{"intencao": "clinico"}}
+
+Entrada: "ar ambiente"
+Saída: {{"intencao": "clinico"}}
+
+Entrada: "oxigênio suplementar"
+Saída: {{"intencao": "clinico"}}
+
+Entrada: "ventilação mecânica"
+Saída: {{"intencao": "clinico"}}
+
+Entrada: "paciente estável, sem queixas"
 Saída: {{"intencao": "clinico"}}
 
 Entrada: "Paciente dormindo bem"
