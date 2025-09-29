@@ -17,29 +17,39 @@ class AuxiliarSubgraph:
     
     def _identificar_tipo_ajuda(self, texto_usuario: str) -> str:
         """
-        Identifica tipo de ajuda solicitada
+        Identifica tipo de ajuda solicitada via LLM (sem keywords)
         Returns: tipo da ajuda
         """
-        texto_lower = texto_usuario.lower()
-        
-        # Saudações
-        if any(palavra in texto_lower for palavra in ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite']):
-            return 'saudacao'
-        
-        # Ajuda/instruções
-        if any(palavra in texto_lower for palavra in ['ajuda', 'help', 'como', 'instrução', 'instrucao']):
-            return 'instrucoes'
-        
-        # Problemas técnicos
-        if any(palavra in texto_lower for palavra in ['erro', 'problema', 'bug', 'não funciona', 'nao funciona']):
-            return 'suporte'
-        
-        # Dúvidas sobre plantão
-        if any(palavra in texto_lower for palavra in ['plantão', 'plantao', 'escala', 'horário', 'horario']):
-            return 'plantao'
-        
-        # Default
-        return 'geral'
+        # Usar LLM para classificar tipo de ajuda (sem keywords)
+        try:
+            from app.llm.confirmation_classifier import ConfirmationClassifier
+            import os
+            
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                logger.warning("OPENAI_API_KEY não encontrada, usando fallback")
+                return 'geral'
+            
+            classifier = ConfirmationClassifier(
+                api_key=api_key,
+                model=os.getenv("INTENT_MODEL", "gpt-4o-mini")
+            )
+            
+            tipo = classifier.classificar_tipo_ajuda(texto_usuario)
+            
+            # Mapear para tipos específicos do auxiliar
+            if tipo == "saudacao":
+                return 'saudacao'
+            elif tipo == "instrucoes":
+                return 'instrucoes'
+            elif tipo == "comandos":
+                return 'geral'  # Mostrar comandos gerais
+            else:
+                return 'geral'
+            
+        except Exception as e:
+            logger.error("Erro ao classificar tipo de ajuda via LLM", error=str(e))
+            return 'geral'
     
     def _gerar_resposta_ajuda(self, tipo: str, state: GraphState) -> str:
         """Gera resposta baseada no tipo de ajuda"""

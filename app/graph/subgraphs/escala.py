@@ -26,33 +26,29 @@ class EscalaSubgraph:
     
     def _identificar_acao_escala(self, texto_usuario: str) -> str:
         """
-        Identifica ação relacionada à escala
+        Identifica ação relacionada à escala via LLM (sem keywords)
         Returns: 'confirmar', 'cancelar', 'consultar'
         """
-        texto_lower = texto_usuario.lower()
-        
-        # Palavras-chave para confirmação
-        confirmar_keywords = [
-            'confirmo', 'confirmar', 'presente', 'presença', 'sim', 'ok', 
-            'chegando', 'cheguei', 'estou aqui', 'vou trabalhar'
-        ]
-        
-        # Palavras-chave para cancelamento
-        cancelar_keywords = [
-            'cancelar', 'cancelo', 'não posso', 'nao posso', 'não vou', 'nao vou',
-            'emergência', 'emergencia', 'doente', 'problema', 'imprevisto'
-        ]
-        
-        # Verifica cancelamento primeiro (prioridade)
-        if any(keyword in texto_lower for keyword in cancelar_keywords):
-            return 'cancelar'
-        
-        # Depois verifica confirmação
-        if any(keyword in texto_lower for keyword in confirmar_keywords):
-            return 'confirmar'
-        
-        # Default: consultar
-        return 'consultar'
+        try:
+            # Usar LLM para classificar ação
+            from app.llm.confirmation_classifier import ConfirmationClassifier
+            import os
+            
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                logger.warning("OPENAI_API_KEY não encontrada, usando fallback")
+                return 'consultar'
+            
+            classifier = ConfirmationClassifier(
+                api_key=api_key,
+                model=os.getenv("INTENT_MODEL", "gpt-4o-mini")
+            )
+            
+            return classifier.classificar_acao_escala(texto_usuario)
+            
+        except Exception as e:
+            logger.error("Erro ao classificar ação de escala via LLM", error=str(e))
+            return 'consultar'
     
     def _preparar_confirmacao(self, state: GraphState, acao: str) -> str:
         """
@@ -65,40 +61,31 @@ class EscalaSubgraph:
         if not schedule_id:
             return "Erro: Dados da escala não encontrados. Tente novamente."
         
-        # Prepara payload baseado na ação
-        if acao == 'confirmar':
-            payload = {
-                "scheduleID": schedule_id,
-                "responseValue": "confirmado",
-                "caregiverID": sessao.get("caregiver_id"),
-                "phoneNumber": sessao.get("telefone")
-            }
-            mensagem = f"Confirma sua presença no plantão?"
-        
-        elif acao == 'cancelar':
-            payload = {
-                "scheduleID": schedule_id,
-                "responseValue": "cancelado",
-                "caregiverID": sessao.get("caregiver_id"),
-                "phoneNumber": sessao.get("telefone"),
-                "reason": "Cancelado pelo cuidador"
-            }
-            mensagem = f"Confirma o cancelamento do plantão?"
-        
-        else:
-            # Consultar - não precisa de confirmação
+        # CORREÇÃO: Verifica se plantão já está confirmado
+        response_status = sessao.get("response", "").lower()
+        if response_status == "confirmado":
+            # Plantão já confirmado - permite consulta
             return self._consultar_escala(state)
+        
+        # Plantão não confirmado - sempre pede confirmação (independente da ação)
+        payload = {
+            "scheduleID": schedule_id,
+            "responseValue": "confirmado",
+            "caregiverID": sessao.get("caregiver_id"),
+            "phoneNumber": sessao.get("telefone")
+        }
+        mensagem = f"Confirma sua presença no plantão?"
         
         # Salva no estado pendente
         state.pendente = {
             "fluxo": "escala",
-            "acao": acao,
+            "acao": "confirmar",  # Sempre confirmar quando não confirmado
             "payload": payload
         }
         
-        logger.info("Confirmação de escala preparada",
+        logger.info("Confirmação de presença preparada",
                    schedule_id=schedule_id,
-                   acao=acao)
+                   response_status=response_status)
         
         return mensagem
     
@@ -114,18 +101,18 @@ class EscalaSubgraph:
             # Atualiza dados da sessão
             state.sessao.update({
                 "schedule_id": result.get("scheduleID"),
-                "turno_permitido": result.get("turnoPermitido", True),
-                "turno_iniciado": result.get("turnoIniciado", False),
-                "empresa": result.get("empresa"),
+                "turno_permitido": result.get("shiftAllow", True),
+                "turno_iniciado": result.get("scheduleStarted", False),
+                "empresa": result.get("company"),
                 "data_relatorio": result.get("reportDate")
             })
             
             # Monta resposta informativa
-            if result.get("turnoPermitido"):
-                if result.get("turnoIniciado"):
-                    return f"Plantão já iniciado. Empresa: {result.get('empresa', 'N/A')}"
+            if result.get("shiftAllow"):
+                if result.get("scheduleStarted"):
+                    return f"Plantão já iniciado. Empresa: {result.get('company', 'N/A')}"
                 else:
-                    return f"Plantão agendado. Empresa: {result.get('empresa', 'N/A')}. Confirme sua presença quando chegar."
+                    return f"Plantão agendado. Empresa: {result.get('company', 'N/A')}. Confirme sua presença quando chegar."
             else:
                 return "Nenhum plantão encontrado para hoje ou plantão não permitido."
                 
@@ -194,16 +181,37 @@ class EscalaSubgraph:
         # Adiciona à lista de fluxos executados
         state.adicionar_fluxo_executado("escala")
         
-        texto_usuario = state.entrada.get("texto_usuario", "").lower()
+        texto_usuario = state.entrada.get("texto_usuario", "")
         
         # Verifica se é resposta de confirmação
         if state.tem_pendente() and state.pendente.get("fluxo") == "escala":
-            if "sim" in texto_usuario or "confirmo" in texto_usuario or "ok" in texto_usuario:
-                return self._executar_acao_confirmada(state)
-            elif "não" in texto_usuario or "nao" in texto_usuario or "cancelar" in texto_usuario:
-                state.limpar_pendente()
-                return "Ação cancelada."
-            else:
+            try:
+                # Usar LLM para classificar confirmação
+                from app.llm.confirmation_classifier import ConfirmationClassifier
+                import os
+                
+                api_key = os.getenv("OPENAI_API_KEY")
+                if api_key:
+                    classifier = ConfirmationClassifier(
+                        api_key=api_key,
+                        model=os.getenv("INTENT_MODEL", "gpt-4o-mini")
+                    )
+                    
+                    confirmacao = classifier.classificar_confirmacao(texto_usuario)
+                    
+                    if confirmacao == "sim":
+                        return self._executar_acao_confirmada(state)
+                    elif confirmacao == "nao":
+                        state.limpar_pendente()
+                        return "Ação cancelada."
+                    else:
+                        return "Responda 'sim' para confirmar ou 'não' para cancelar."
+                else:
+                    # Fallback se não tiver API key
+                    return "Responda 'sim' para confirmar ou 'não' para cancelar."
+                    
+            except Exception as e:
+                logger.error("Erro ao classificar confirmação via LLM", error=str(e))
                 return "Responda 'sim' para confirmar ou 'não' para cancelar."
         
         # Identifica ação e prepara confirmação

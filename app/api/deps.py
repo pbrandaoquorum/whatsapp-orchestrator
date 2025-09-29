@@ -178,9 +178,14 @@ def get_main_router() -> MainRouter:
 
 
 def get_fiscal_processor() -> FiscalProcessor:
-    """Retorna processador fiscal"""
+    """Retorna processador fiscal com LLM"""
     if "fiscal_processor" not in _components:
-        _components["fiscal_processor"] = FiscalProcessor()
+        settings = get_settings()
+        _components["fiscal_processor"] = FiscalProcessor(
+            dynamo_manager=get_dynamo_state_manager(),
+            api_key=settings.openai_api_key,
+            model=settings.intent_model
+        )
     return _components["fiscal_processor"]
 
 

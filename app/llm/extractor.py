@@ -20,7 +20,7 @@ class ClinicalExtractor:
     
     def _get_extraction_prompt(self, texto_usuario: str) -> str:
         """Monta prompt para extração de dados clínicos"""
-        return f"""Extraia sinais vitais e nota clínica do texto do usuário.
+        return f"""Extraia sinais vitais, condição respiratória e nota clínica do texto do usuário.
 
 TEXTO: "{texto_usuario}"
 
@@ -29,11 +29,24 @@ INSTRUÇÕES:
 - Não invente valores; em dúvida, use null e adicione warning
 - Temperature = 0 (determinístico)
 
-NORMALIZAÇÕES:
-- PA: preferir "120x80". Se "12/8" for inequívoco que é 120x80, normalize; se ambíguo, PA=null e warning
-- Decimais sempre com ponto (37,2 → 37.2)  
-- FC em bpm, FR em irpm, Sat em %, Temp em °C
-- nota: texto livre não usado para vitais; se só houver vitais, nota=null
+NORMALIZAÇÕES VITAIS:
+- PA: aceite "120x80", "120/80", "12x8", "12/8". Se "12/8" normalize para "120x80"
+- FC: aceite "fc", "freq card", "batimentos", "bpm" (ex: "fc 78", "78 bpm")
+- FR: aceite "fr", "freq resp", "respiração", "irpm" (ex: "fr 18", "18 irpm")  
+- Sat: aceite "sat", "spo2", "saturação", "%" (ex: "sat 97", "97%", "spo2 97")
+- Temp: aceite "temp", "temperatura", "°C", "graus" (ex: "temp 36.8", "36,2°C")
+- Decimais sempre com ponto (37,2 → 37.2)
+
+CONDIÇÃO RESPIRATÓRIA:
+- supplementaryOxygen: identifique "ar ambiente", "ventilação mecânica", "oxigênio suplementar", "O2", "cateter nasal", "máscara"
+- Se mencionar O2, oxigênio, cateter → "Oxigênio suplementar"
+- Se mencionar ventilador, intubado → "Ventilação mecânica"  
+- Se mencionar ar ambiente ou nada → "Ar ambiente"
+
+NOTA CLÍNICA:
+- nota: QUALQUER texto descritivo sobre o paciente (estado, sintomas, observações)
+- Inclua: "estável", "bem", "dormindo", "consciente", "orientado", "sem queixas", "febre", "dor", etc.
+- Se houver QUALQUER descrição do paciente, extraia como nota
 
 SCHEMA:
 {{
@@ -44,6 +57,7 @@ SCHEMA:
     "Sat": "number|null",
     "Temp": "number|null"
   }},
+  "supplementaryOxygen": "string|null",
   "nota": "string|null",
   "rawMentions": {{}},
   "warnings": ["string"]
@@ -51,14 +65,17 @@ SCHEMA:
 
 EXEMPLOS:
 
-Entrada: "pa 120x80 fc 78 fr 18 sat 97 temp 36.8 paciente com tosse seca"
-Saída: {{"vitals":{{"PA":"120x80","FC":78,"FR":18,"Sat":97,"Temp":36.8}},"nota":"paciente com tosse seca","rawMentions":{{"PA":"120x80","FC":"78","FR":"18","Sat":"97","Temp":"36.8"}},"warnings":[]}}
+Entrada: "pa 120x80 fc 78 fr 18 sat 97 temp 36.8 paciente em ar ambiente com tosse seca"
+Saída: {{"vitals":{{"PA":"120x80","FC":78,"FR":18,"Sat":97,"Temp":36.8}},"supplementaryOxygen":"Ar ambiente","nota":"paciente com tosse seca","rawMentions":{{"PA":"120x80","FC":"78","FR":"18","Sat":"97","Temp":"36.8"}},"warnings":[]}}
 
-Entrada: "PA 12/8 FC 85 FR 21 saturacao 95% temperatura 37,2"
-Saída: {{"vitals":{{"PA":"120x80","FC":85,"FR":21,"Sat":95,"Temp":37.2}},"nota":null,"rawMentions":{{"PA":"12/8","FC":"85","FR":"21","Sat":"95%","Temp":"37,2"}},"warnings":[]}}
+Entrada: "pressão 12/8, batimentos 85, respiração 21, saturação 95%, temperatura 37,2 graus"
+Saída: {{"vitals":{{"PA":"120x80","FC":85,"FR":21,"Sat":95,"Temp":37.2}},"supplementaryOxygen":null,"nota":null,"rawMentions":{{"PA":"12/8","FC":"85","FR":"21","Sat":"95%","Temp":"37,2"}},"warnings":[]}}
 
-Entrada: "PA 12/8 e febre leve"
-Saída: {{"vitals":{{"PA":null,"FC":null,"FR":null,"Sat":null,"Temp":null}},"nota":"febre leve","rawMentions":{{"PA":"12/8"}},"warnings":["PA_ambigua_12_8"]}}
+Entrada: "paciente estável, sem alterações"
+Saída: {{"vitals":{{"PA":null,"FC":null,"FR":null,"Sat":null,"Temp":null}},"supplementaryOxygen":null,"nota":"paciente estável, sem alterações","rawMentions":{{}},"warnings":[]}}
+
+Entrada: "78 bpm, spo2 97%, paciente consciente em O2"
+Saída: {{"vitals":{{"PA":null,"FC":78,"FR":null,"Sat":97,"Temp":null}},"supplementaryOxygen":"Oxigênio suplementar","nota":"paciente consciente","rawMentions":{{"FC":"78 bpm","Sat":"spo2 97%"}},"warnings":[]}}
 
 JSON:"""
     

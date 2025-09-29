@@ -100,16 +100,37 @@ class FinalizarSubgraph:
         # Adiciona à lista de fluxos executados
         state.adicionar_fluxo_executado("finalizar")
         
-        texto_usuario = state.entrada.get("texto_usuario", "").lower()
+        texto_usuario = state.entrada.get("texto_usuario", "")
         
         # Verifica se é resposta de confirmação
         if state.tem_pendente() and state.pendente.get("fluxo") == "finalizar":
-            if "sim" in texto_usuario or "confirmo" in texto_usuario or "ok" in texto_usuario:
-                return self._executar_finalizacao(state)
-            elif "não" in texto_usuario or "nao" in texto_usuario or "cancelar" in texto_usuario:
-                state.limpar_pendente()
-                return "Finalização cancelada."
-            else:
+            try:
+                # Usar LLM para classificar confirmação
+                from app.llm.confirmation_classifier import ConfirmationClassifier
+                import os
+                
+                api_key = os.getenv("OPENAI_API_KEY")
+                if api_key:
+                    classifier = ConfirmationClassifier(
+                        api_key=api_key,
+                        model=os.getenv("INTENT_MODEL", "gpt-4o-mini")
+                    )
+                    
+                    confirmacao = classifier.classificar_confirmacao(texto_usuario)
+                    
+                    if confirmacao == "sim":
+                        return self._executar_finalizacao(state)
+                    elif confirmacao == "nao":
+                        state.limpar_pendente()
+                        return "Finalização cancelada."
+                    else:
+                        return "Responda 'sim' para confirmar a finalização ou 'não' para cancelar."
+                else:
+                    # Fallback se não tiver API key
+                    return "Responda 'sim' para confirmar a finalização ou 'não' para cancelar."
+                    
+            except Exception as e:
+                logger.error("Erro ao classificar confirmação via LLM", error=str(e))
                 return "Responda 'sim' para confirmar a finalização ou 'não' para cancelar."
         
         # Verifica se todos os vitais estão presentes

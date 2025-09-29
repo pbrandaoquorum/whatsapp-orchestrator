@@ -74,6 +74,7 @@ def extrair_clinico_via_llm(texto: str, extractor: ClinicalExtractor) -> Dict[st
     # 2) Extrai dados do resultado do LLM
     vitais_llm = llm_result.get("vitals", {})
     nota = llm_result.get("nota")
+    supplementary_oxygen = llm_result.get("supplementaryOxygen")
     warnings = list(llm_result.get("warnings", []))
     
     # 3) Valida e normaliza cada vital
@@ -149,6 +150,7 @@ def extrair_clinico_via_llm(texto: str, extractor: ClinicalExtractor) -> Dict[st
     return {
         "vitais": vitais_validados,
         "nota": nota,
+        "supplementaryOxygen": supplementary_oxygen,
         "faltantes": faltantes,
         "warnings": warnings,
         "raw_llm_result": llm_result

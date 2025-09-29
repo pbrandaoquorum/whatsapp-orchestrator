@@ -34,6 +34,11 @@ class MainRouter:
             sessao.get("caregiver_id")
         )
     
+    def _plantao_confirmado(self, state: GraphState) -> bool:
+        """Verifica se o plantão está confirmado para permitir updates de dados"""
+        response = state.sessao.get("response", "").lower()
+        return response == "confirmado"
+    
     def _chamar_get_schedule_started(self, state: GraphState) -> None:
         """Chama getScheduleStarted e preenche dados da sessão"""
         telefone = state.sessao.get("telefone")
@@ -50,14 +55,22 @@ class MainRouter:
             )
             
             # Preenche dados da sessão
+            response_status = result.get("response", "").lower()
+            shift_allow = result.get("shiftAllow", True)
+            
+            # Lógica correta: só permite se shiftAllow=true E response="confirmado"
+            turno_realmente_permitido = shift_allow and response_status == "confirmado"
+            
             state.sessao.update({
                 "schedule_id": result.get("scheduleID"),
                 "report_id": result.get("reportID"),
                 "patient_id": result.get("patientID"),
                 "caregiver_id": result.get("caregiverID"),
                 "data_relatorio": result.get("reportDate"),
-                "turno_permitido": result.get("shiftAllow", True),
+                "turno_permitido": turno_realmente_permitido,  # Lógica corrigida
                 "turno_iniciado": result.get("scheduleStarted", False),
+                "response": result.get("response"),  # Status do plantão
+                "shift_allow": shift_allow,  # Valor original para debug
                 "empresa": result.get("company"),
                 "cooperativa": result.get("cooperative")
             })
@@ -68,13 +81,16 @@ class MainRouter:
                        report_id=state.sessao.get("report_id"),
                        patient_id=state.sessao.get("patient_id"),
                        caregiver_id=state.sessao.get("caregiver_id"),
-                       turno_permitido=state.sessao.get("turno_permitido"),
+                       shift_allow=shift_allow,
+                       response_status=response_status,
+                       turno_permitido=turno_realmente_permitido,
                        turno_iniciado=state.sessao.get("turno_iniciado"))
             
-            logger.info("Dados da sessão atualizados via getScheduleStarted",
-                       schedule_id=state.sessao.get("schedule_id"),
-                       report_id=state.sessao.get("report_id"),
-                       turno_permitido=state.sessao.get("turno_permitido"))
+            logger.info("Lógica de permissão aplicada",
+                       shift_allow_original=shift_allow,
+                       response=response_status,
+                       turno_permitido_final=turno_realmente_permitido,
+                       formula="shiftAllow AND response=='confirmado'")
             
         except Exception as e:
             logger.error("Erro ao chamar getScheduleStarted", telefone=telefone, error=str(e))
@@ -112,12 +128,23 @@ class MainRouter:
             logger.info("Sessão cancelada, redirecionando para auxiliar")
             return "auxiliar"
         
-        # Gate 2: Se turno não permitido -> auxiliar
-        if not sessao.get("turno_permitido"):
-            logger.info("Turno não permitido, redirecionando para auxiliar")
+        # Gate 2: Se turno não permitido por falta de plantão -> auxiliar
+        if not sessao.get("shift_allow", True):
+            logger.info("Plantão não existe (shiftAllow=false), redirecionando para auxiliar")
             return "auxiliar"
         
-        # Gate 3: Se intenção é finalizar mas vitais incompletos -> clinico
+        # Gate 3: Se plantão não confirmado -> sempre escala (para confirmação ou clínico)
+        if not self._plantao_confirmado(state):
+            response = sessao.get("response", "N/A")
+            if intencao == "clinico":
+                logger.info("Plantão não confirmado, redirecionando clínico para escala",
+                           response=response)
+            else:
+                logger.info("Plantão não confirmado, direcionando para escala",
+                           intencao_original=intencao, response=response)
+            return "escala"
+        
+        # Gate 4: Se intenção é finalizar mas vitais incompletos -> clinico
         if intencao == "finalizar":
             vitais_completos = state.get_vitais_completos()
             if not vitais_completos:

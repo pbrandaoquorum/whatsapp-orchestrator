@@ -115,12 +115,16 @@ class WhatsAppOrchestrator:
             logger.info("Subgrafo executado",
                        session_id=session_id,
                        subgrafo=proximo_subgrafo,
-                       resultado=resultado_subgrafo[:100] if resultado_subgrafo else None)
+                       codigo_resultado=resultado_subgrafo)
             
-            # 6. Fiscal consolida resposta final
-            resposta_final = self.fiscal.processar_resposta_fiscal(state, resultado_subgrafo)
+            # 6. Salva estado ANTES do Fiscal
+            self.dynamo_manager.salvar_estado(session_id, state)
             
-            # 7. Salva estado
+            # 7. Fiscal lê estado do DynamoDB e gera resposta via LLM
+            resposta_final = self.fiscal.processar_resposta_fiscal(session_id, texto_usuario)
+            
+            # 8. Salva resposta fiscal no estado
+            state.resposta_fiscal = resposta_final
             self.dynamo_manager.salvar_estado(session_id, state)
             
             logger.info("Grafo executado com sucesso",

@@ -128,3 +128,15 @@ class LambdaHttpClient:
                    success=True)
         
         return result
+    
+    def post(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Método genérico POST para webhooks (n8n, etc.)
+        """
+        logger.info("Chamando webhook POST", url=url[:50])
+        
+        result = self._make_request('POST', url, json=payload)
+        
+        logger.info("Webhook POST concluído", url=url[:50], success=True)
+        
+        return result
