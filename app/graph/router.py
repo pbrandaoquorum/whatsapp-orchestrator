@@ -41,6 +41,26 @@ class MainRouter:
         response = state.sessao.get("response", "").lower()
         return response == "confirmado"
     
+    def _verificar_flag_finalizacao(self, state: GraphState) -> bool:
+        """
+        Verifica se a flag de finalização está atualizada
+        
+        Para plantões confirmados, sempre atualiza se finish_reminder_sent for False
+        pois pode estar desatualizada em relação ao backend
+        """
+        sessao = state.sessao
+        
+        # Se plantão não está confirmado, não precisa verificar finalização
+        if not self._plantao_confirmado(state):
+            return True
+        
+        # Para plantões confirmados, se finish_reminder_sent for False, pode estar desatualizada
+        # Então forçamos atualização para pegar o valor correto do backend
+        finish_reminder = sessao.get("finish_reminder_sent", False)
+        
+        # Se for False, pode estar desatualizada - força atualização
+        return finish_reminder is True
+    
     def _chamar_get_schedule_started(self, state: GraphState) -> None:
         """Chama getScheduleStarted e preenche dados da sessão"""
         telefone = state.sessao.get("telefone")
@@ -144,28 +164,11 @@ class MainRouter:
                            intencao_original=intencao, response=response)
             return "escala"
         
-        # Gate 4: Se finishReminderSent=true -> direciona para finalizar (exceto se já for finalizar)
-        if sessao.get("finish_reminder_sent", False) and intencao != "finalizar":
-            logger.info("Lembrete de finalização enviado, direcionando para finalizar",
-                       intencao_original=intencao)
-            return "finalizar"
+        # Gate 4: REMOVIDO - Finalização agora tem prioridade máxima no router principal
         
-        # Gate 5: Se intenção é finalizar mas vitais incompletos -> clinico
-        if intencao == "finalizar":
-            vitais_completos = state.get_vitais_completos()
-            if not vitais_completos:
-                faltantes = state.get_vitais_faltantes()
-                logger.info("Finalizar solicitado mas vitais incompletos",
-                           faltantes=faltantes)
-                
-                # Configura retomada
-                state.retomada = {
-                    "fluxo": "finalizar",
-                    "motivo": "precisa_vitais",
-                    "faltantes": faltantes
-                }
-                
-                return "clinico"
+        # Gate 5: REMOVIDO - Finalização não requer vitais completos
+        # O novo fluxo de finalização coleta tópicos específicos, não vitais
+        # Vitais são opcionais para finalização
         
         # Se chegou até aqui, mantém intenção original
         return intencao
@@ -310,16 +313,32 @@ class MainRouter:
             logger.info("Dados da sessão faltando, chamando getScheduleStarted")
             self._chamar_get_schedule_started(state)
         
-        # 4. Classifica intenção via LLM
-        intencao = self._classificar_intencao(state)
+        # 3.1. Verifica se precisa atualizar flag de finalização
+        elif not self._verificar_flag_finalizacao(state):
+            logger.info("Flag de finalização desatualizada, atualizando via getScheduleStarted",
+                       finish_reminder_atual=state.sessao.get("finish_reminder_sent"),
+                       plantao_confirmado=self._plantao_confirmado(state))
+            self._chamar_get_schedule_started(state)
         
-        # 5. Aplica gates determinísticos
-        intencao_final = self._aplicar_gates_deterministicos(state, intencao)
+        # 4. GATE DE FINALIZAÇÃO (prioridade máxima - antes da classificação LLM)
+        if state.sessao.get("finish_reminder_sent", False):
+            logger.info("Flag finishReminderSent=true detectada, forçando finalização",
+                       finish_reminder_sent=True)
+            intencao_final = "finalizar"
+        else:
+            # 5. Classifica intenção via LLM
+            intencao = self._classificar_intencao(state)
+            
+            # 6. Aplica gates determinísticos
+            intencao_final = self._aplicar_gates_deterministicos(state, intencao)
         
         # 6. Log do resultado final
-        if intencao != intencao_final:
+        if 'intencao' in locals() and intencao != intencao_final:
             logger.info("Intenção modificada por gates",
                        intencao_original=intencao,
+                       intencao_final=intencao_final)
+        elif not 'intencao' in locals():
+            logger.info("Finalização forçada por finishReminderSent",
                        intencao_final=intencao_final)
         
         # 7. Atualiza estado

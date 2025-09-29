@@ -1,6 +1,15 @@
 # WhatsApp Orchestrator 🤖
 
-Sistema inteligente de orquestração para WhatsApp com processamento de dados clínicos, gerenciamento de escalas e notas operacionais.
+Sistema inteligente de orquestração para WhatsApp com processamento de dados clínicos, gerenciamento de escalas, notas operacionais e finalização automática de plantões.
+
+## 🚀 Funcionalidades Principais
+
+- **🏥 Gestão de Plantões**: Confirmação de presença e controle de escalas
+- **📊 Dados Clínicos**: Coleta inteligente de sinais vitais, notas e condições respiratórias via LLM
+- **⚡ Notas Operacionais**: Processamento instantâneo de observações administrativas
+- **📋 Finalização Automática**: Coleta de 8 tópicos de finalização com envio para relatórios
+- **🧠 IA Contextual**: Respostas dinâmicas baseadas no estado completo da conversa
+- **🔄 Integração Completa**: Webhooks n8n, Lambdas AWS e DynamoDB
 
 ## 🏗️ Arquitetura
 
@@ -31,6 +40,141 @@ app/
     └── generators/            # Geração de conteúdo
         └── fiscal.py          # Geração de respostas contextuais
 ```
+
+## 🎯 Regras de Negócio e Fluxos
+
+### 🚦 Sistema de Gates Determinísticos
+
+O sistema utiliza um **roteamento inteligente** com gates de prioridade para determinar qual subgrafo deve processar cada mensagem:
+
+#### **📋 Ordem de Prioridade dos Gates:**
+
+1. **🔴 GATE DE FINALIZAÇÃO (Prioridade Máxima)**
+   - **Condição**: `finishReminderSent = true` no estado da sessão
+   - **Ação**: Força direcionamento para subgrafo `finalizar`
+   - **Características**: Sobrepõe qualquer classificação LLM
+   - **Objetivo**: Garantir que plantões prontos para finalização sejam processados
+
+2. **🟡 GATE DE CONFIRMAÇÃO PENDENTE**
+   - **Condição**: Existe confirmação pendente no estado (`state.pendente`)
+   - **Ação**: Direciona para o subgrafo que iniciou a confirmação
+   - **Características**: Mantém contexto de confirmações em andamento
+   - **Objetivo**: Preservar fluxo de confirmações (presença, dados clínicos, finalização)
+
+3. **🟠 GATE DE NOTAS OPERACIONAIS**
+   - **Condição**: LLM `OperationalNoteClassifier` detecta nota operacional
+   - **Ação**: Direciona para subgrafo `operacional`
+   - **Características**: Processamento instantâneo sem confirmação
+   - **Exemplos**: "acabou a fralda", "médico visitou", "familiar ligou"
+
+4. **🟢 GATE DE PLANTÃO NÃO CONFIRMADO**
+   - **Condição**: `shift_allow = true` MAS `response != "confirmado"`
+   - **Ação**: Força direcionamento para subgrafo `escala`
+   - **Características**: Impede coleta de dados sem confirmação de presença
+   - **Objetivo**: Garantir confirmação antes de qualquer update
+
+5. **🔵 CLASSIFICAÇÃO LLM (Padrão)**
+   - **Condição**: Nenhum gate anterior ativado
+   - **Ação**: Usa `IntentClassifier` para determinar intenção
+   - **Opções**: `escala`, `clinico`, `operacional`, `finalizar`, `auxiliar`
+
+### 🏥 Fluxos de Negócio Detalhados
+
+#### **📊 Fluxo Clínico**
+```
+1. Coleta via LLM → Sinais vitais (PA, FC, FR, Sat, Temp)
+2. Coleta via LLM → Condição respiratória (Ar ambiente/O2/VM)
+3. Coleta via LLM → Nota clínica (observações do paciente)
+4. Validação → Faixas aceitáveis e formato correto
+5. Confirmação → Apresenta resumo completo e pede confirmação
+6. Envio → Webhook n8n → Lambda updateClinicalData
+7. Limpeza → Estado clínico resetado após sucesso
+```
+
+#### **⚡ Fluxo Operacional (Instantâneo)**
+```
+1. Detecção LLM → Classifica como nota operacional
+2. Processamento → Sem necessidade de confirmação
+3. Envio → Webhook n8n imediato
+4. Resposta → Confirmação de recebimento
+```
+
+#### **📋 Fluxo de Finalização**
+```
+1. Trigger → finishReminderSent=true no backend
+2. Recuperação → Notas existentes via getNoteReport
+3. Coleta LLM → 8 tópicos de finalização:
+   - Alimentação e Hidratação
+   - Evacuações (Fezes e Urina)  
+   - Sono
+   - Humor
+   - Medicações
+   - Atividades (físicas e cognitivas)
+   - Informações clínicas adicionais
+   - Informações administrativas
+4. Envio Parcial → Cada tópico vai para webhook n8n
+5. Confirmação → Resumo completo quando todos preenchidos
+6. Finalização → updatereportsummaryad + limpeza completa do estado
+```
+
+#### **🏥 Fluxo de Escala**
+```
+1. Verificação → getScheduleStarted para dados da sessão
+2. Validação → Plantão existe e está permitido
+3. Confirmação → Usuário confirma presença
+4. Update → updateWorkScheduleResponse marca como confirmado
+5. Liberação → Permite coleta de dados clínicos
+```
+
+### 🧠 Sistema de IA Contextual
+
+#### **🎯 Fiscal Processor (Orquestrador Central)**
+- **Função**: Gera todas as respostas ao usuário via LLM
+- **Entrada**: Estado canônico completo do DynamoDB + código do subgrafo
+- **Características**:
+  - Sem respostas estáticas
+  - Contexto completo da conversa
+  - Adaptação dinâmica baseada no estado
+  - Códigos específicos para cada situação
+
+#### **🔍 Classificadores LLM**
+- **`IntentClassifier`**: Determina intenção geral (escala/clinico/operacional/finalizar/auxiliar)
+- **`OperationalNoteClassifier`**: Detecta notas operacionais instantâneas
+- **`ConfirmationClassifier`**: Interpreta confirmações (sim/não/cancelar)
+
+#### **📊 Extratores LLM**
+- **`ClinicalExtractor`**: Extrai sinais vitais, notas e condições respiratórias
+- **`FinalizacaoExtractor`**: Extrai tópicos de finalização de forma estruturada
+
+### 🔄 Integrações Externas
+
+#### **🌐 Webhooks n8n**
+- **Uso**: Processamento de dados clínicos, operacionais e de finalização
+- **Formato**: Compatível com lambda updateClinicalData
+- **Campos**: `clinicalNote`, `reportID`, `reportDate`, etc.
+
+#### **⚡ Lambdas AWS**
+- **`getScheduleStarted`**: Dados da sessão e flags de controle
+- **`updateWorkScheduleResponse`**: Confirmação de presença
+- **`getNoteReport`**: Recuperação de notas existentes
+- **`updatereportsummaryad`**: Finalização de relatórios
+
+#### **🗄️ DynamoDB**
+- **Tabela**: `ConversationStates`
+- **Formato**: JSON estruturado com estado completo
+- **Persistência**: Contexto preservado entre mensagens
+- **Limpeza**: Estado zerado após finalização completa
+
+## 📊 Diagrama Visual Completo
+
+Para uma visualização completa de todos os fluxos, gates e integrações, consulte: **[DIAGRAMA_FLUXO.md](./DIAGRAMA_FLUXO.md)**
+
+O diagrama inclui:
+- 🌊 Fluxo principal com gates de prioridade
+- 📊 Detalhamento de cada subgrafo (clínico, finalização, operacional)
+- 🎯 Sistema de prioridades dos gates
+- 🧠 Arquitetura de IA com classificadores e extratores
+- 🔄 Integrações externas (n8n, Lambdas, DynamoDB)
 
 ## 📂 Explicação Detalhada dos Arquivos
 
@@ -81,8 +225,79 @@ app/
 ### 📋 **Arquivos de Configuração**
 - **`pyproject.toml`** - Configuração do projeto Python, dependências e metadados
 - **`Makefile`** - Comandos automatizados para desenvolvimento (dev, test, clean, etc.)
-- **`GUIA_EXECUCAO_LOCAL.md`** - Guia detalhado para executar o sistema localmente
+- **`env.example`** - Exemplo de variáveis de ambiente necessárias
 - **`README.md`** - Este arquivo, documentação principal do projeto
+
+## 🚀 Como Executar
+
+### 📋 Pré-requisitos
+- Python 3.11+
+- Conta AWS com DynamoDB configurado
+- Chaves de API OpenAI
+- Webhooks n8n configurados
+
+### ⚙️ Configuração
+1. **Clone o repositório**:
+   ```bash
+   git clone <repo-url>
+   cd whatsapp-orchestrator
+   ```
+
+2. **Crie ambiente virtual**:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   # ou
+   venv\Scripts\activate     # Windows
+   ```
+
+3. **Instale dependências**:
+   ```bash
+   pip install -e .
+   ```
+
+4. **Configure variáveis de ambiente**:
+   ```bash
+   cp env.example .env
+   # Edite .env com suas credenciais
+   ```
+
+5. **Execute a aplicação**:
+   ```bash
+   python -m uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+### 🧪 Teste via curl
+```bash
+curl -X POST "http://127.0.0.1:8000/webhook/whatsapp" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message_id": "test_001",
+    "phoneNumber": "5511999999999",
+    "text": "confirmo presença",
+    "meta": {"source": "test"}
+  }'
+```
+
+### 🔧 Variáveis de Ambiente Principais
+```env
+# OpenAI
+OPENAI_API_KEY=sk-...
+EXTRACTOR_MODEL=gpt-4o-mini
+
+# AWS
+AWS_REGION=sa-east-1
+DYNAMODB_TABLE_CONVERSAS=ConversationStates
+
+# Lambdas
+LAMBDA_GET_SCHEDULE_STARTED=https://...
+LAMBDA_UPDATE_WORK_SCHEDULE=https://...
+LAMBDA_GET_NOTE_REPORT=https://...
+LAMBDA_UPDATE_SUMMARY=https://...
+
+# Webhooks
+N8N_WEBHOOK_URL_PROD=https://...
+```
 
 ## 🎯 Funcionalidades Principais
 

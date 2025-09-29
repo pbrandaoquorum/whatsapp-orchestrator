@@ -141,10 +141,14 @@ CÓDIGOS DE RESULTADO (prioridade máxima):
 - "CLINICAL_DATA_SAVED": Dados salvos com sucesso → "Dados clínicos salvos com sucesso! Se precisar de algo mais, estou à disposição."
 - "CLINICAL_DATA_CANCELLED": Usuário cancelou → Informe que cancelou e pergunte se quer tentar novamente
 - "CLINICAL_DATA_READY_FOR_CONFIRMATION": Dados completos → Apresente resumo e peça confirmação
-- "FINALIZATION_PARTIAL_DATA": Dados parciais de finalização → Informe o que foi coletado e peça tópicos faltantes
-- "FINALIZATION_READY_FOR_CONFIRMATION": Dados completos → Apresente resumo de finalização e peça confirmação
+- "FINALIZATION_PARTIAL_DATA": Dados parciais de finalização → APENAS mencione tópicos de finalização faltantes (alimentação, evacuações, sono, humor, medicações, atividades, info clínicas/administrativas). NUNCA mencione sinais vitais.
+- "FINALIZATION_READY_FOR_CONFIRMATION": Dados completos → Apresente resumo de finalização e peça confirmação. NUNCA mencione sinais vitais.
 - "FINALIZATION_COMPLETED": Finalização concluída → "Plantão finalizado com sucesso! Obrigado pelo seu trabalho."
 - "FINALIZATION_CANCELLED": Finalização cancelada → "Finalização cancelada. Posso ajudar com mais alguma coisa?"
+
+REGRA ESPECIAL PARA FINALIZAÇÃO:
+- Quando o código contém "FINALIZATION_", NUNCA mencione sinais vitais (PA, FC, FR, Sat, Temp, condição respiratória)
+- Foque APENAS nos 8 tópicos de finalização: alimentação, evacuações, sono, humor, medicações, atividades, informações clínicas adicionais, informações administrativas
 
 STATUS DO PLANTÃO:
 - "confirmado": Plantão confirmado - permite updates de dados clínicos

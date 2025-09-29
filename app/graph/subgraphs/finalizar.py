@@ -123,15 +123,19 @@ class FinalizarSubgraph:
         """Envia informação específica para webhook n8n"""
         sessao = state.sessao
         
+        # Formatar como nota clínica para ser compatível com updateClinicalData
+        nota_formatada = f"[{topico.replace('_', ' ').title()}] {informacao}"
+        
         payload = {
             "reportID": sessao.get("report_id"),
             "reportDate": sessao.get("data_relatorio"),
             "scheduleID": sessao.get("schedule_id"),
             "caregiverID": sessao.get("caregiver_id"),
             "patientID": sessao.get("patient_id"),
-            "topico": topico,
-            "informacao": informacao,
-            "timestamp": None  # Será preenchido pelo n8n
+            "clinicalNote": nota_formatada,  # Usa clinicalNote em vez de topico/informacao
+            # Campos opcionais para compatibilidade
+            "noteType": "finalization",
+            "topic": topico
         }
         
         try:
