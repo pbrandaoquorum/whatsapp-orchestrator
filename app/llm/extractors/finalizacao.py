@@ -19,7 +19,7 @@ class FinalizacaoExtractor:
         logger.info("FinalizacaoExtractor inicializado", model=model)
     
     def _get_extraction_prompt(self, texto_usuario: str, notas_existentes: List[str] = None) -> str:
-        """Monta prompt para extração de tópicos de finalização"""
+        """Cria prompt robusto para extração inteligente de tópicos de finalização"""
         
         notas_contexto = ""
         if notas_existentes:
@@ -29,62 +29,71 @@ NOTAS EXISTENTES DO PLANTÃO:
 
 """
         
-        return f"""Você é um extrator especializado em relatórios de finalização de plantão. Extraia informações sobre os tópicos de finalização do texto fornecido.
+        return f"""Você é um extrator especializado em tópicos de finalização de plantão. Extraia informações do texto de forma inteligente e contextual.
 
 {notas_contexto}TEXTO DO USUÁRIO: "{texto_usuario}"
 
-TÓPICOS DE FINALIZAÇÃO:
+INSTRUÇÕES GERAIS:
+- Responda APENAS JSON válido conforme schema
+- Seja inteligente: reconheça informações mesmo quando expressas de forma casual
+- Extraia TUDO relevante, mesmo informações implícitas ou contextuais
+- Use linguagem natural e preserve o contexto original
+- Se não houver informação clara sobre um tópico, use null
+
+TÓPICOS DE FINALIZAÇÃO (reconheça variações naturais):
 
 1. ALIMENTAÇÃO E HIDRATAÇÃO:
-   - Aceitação alimentar, quantidade ingerida, dificuldades para comer
-   - Hidratação, ingestão de líquidos
-   - Uso de sonda, dietas especiais
+   RECONHEÇA: refeições, comida, bebida, apetite, sede, líquidos, sonda, dieta, comer, beber
+   FRASES TÍPICAS: "comeu bem", "não quis comer", "tomou água", "almoçou", "jantou", "café da manhã", "lanche", "suco", "leite", "recusou alimentação", "vomitou", "engasgou", "se alimentou", "bebeu"
+   EXEMPLOS: "comeu bem no almoço" → "comeu bem no almoço"
 
 2. EVACUAÇÕES (Fezes e Urina):
-   - Frequência e características das evacuações
-   - Uso de fraldas, incontinência
-   - Dificuldades urinárias ou intestinais
+   RECONHEÇA: fezes, urina, xixi, cocô, evacuação, intestino, bexiga, fralda, vaso, banheiro, evacuar, urinar
+   FRASES TÍPICAS: "fez cocô", "urinou", "molhou a fralda", "foi ao banheiro", "intestino preso", "diarreia", "constipação", "incontinência", "segurou xixi", "fezes", "evacuou"
+   EXEMPLOS: "fezes estavam avermelhadas" → "fezes estavam avermelhadas"
 
 3. SONO:
-   - Qualidade do sono, duração
-   - Despertares noturnos, inquietação
-   - Medicações para dormir
+   RECONHEÇA: dormir, sono, descanso, cochilo, noite, despertar, insônia, acordar, descansar
+   FRASES TÍPICAS: "dormiu bem", "não conseguiu dormir", "acordou várias vezes", "cochilou", "insônia", "sonolento", "descansou", "dormiu normal", "noite tranquila"
+   EXEMPLOS: "dormiu bem" → "dormiu bem"
 
 4. HUMOR:
-   - Estado emocional, humor geral
-   - Agitação, ansiedade, depressão
-   - Interação social, comunicação
+   RECONHEÇA: humor, emoção, comportamento, agitação, calma, irritação, alegria, tristeza, ansiedade, estado emocional
+   FRASES TÍPICAS: "estava irritado", "bem humorado", "agitado", "calmo", "ansioso", "triste", "alegre", "conversativo", "quieto", "agressivo", "ficou irritado"
+   EXEMPLOS: "ficou irritado durante o dia" → "ficou irritado durante o dia"
 
 5. MEDICAÇÕES:
-   - Medicamentos administrados
-   - Horários, dosagens
-   - Reações adversas, recusas
+   RECONHEÇA: remédio, medicamento, comprimido, injeção, soro, gotinha, pomada, administrar, tomar, dar remédio
+   FRASES TÍPICAS: "tomou o remédio", "dei dipirona", "recusou medicação", "horário do remédio", "injeção", "não foi administrado", "medicação", "remédio"
+   EXEMPLOS: "não foi administrado medicações" → "não foi administrado medicações"
 
 6. ATIVIDADES (físicas e cognitivas):
-   - Exercícios realizados
-   - Atividades cognitivas, jogos
-   - Mobilidade, fisioterapia
+   RECONHEÇA: exercício, fisioterapia, caminhada, jogo, atividade, movimento, mobilidade, brincadeira, esporte
+   FRASES TÍPICAS: "fez fisioterapia", "caminhou", "jogou", "exercício", "movimentou", "atividade física", "brincou", "leu", "assistiu TV", "vôlei", "futebol"
+   EXEMPLOS: "jogou vôlei" → "jogou vôlei"
 
 7. INFORMAÇÕES CLÍNICAS ADICIONAIS:
-   - Sinais vitais especiais
-   - Sintomas observados
-   - Intercorrências clínicas
+   RECONHEÇA: pressão, temperatura, sintomas, dor, ferida, curativo, intercorrência, sinais vitais, estado geral, clínico
+   FRASES TÍPICAS: "pressão estável", "sem febre", "dor no peito", "curativo limpo", "sem alterações", "intercorrência", "sintomas", "estável", "sem intercorrências"
+   EXEMPLOS: "pressão estável durante todo o plantão" → "pressão estável durante todo o plantão"
 
 8. INFORMAÇÕES ADMINISTRATIVAS:
-   - Visitas médicas, familiares
-   - Procedimentos administrativos
-   - Observações gerais do plantão
+   RECONHEÇA: visita, familiar, médico, enfermeiro, procedimento, troca de plantão, documento, administrativo, falta
+   FRASES TÍPICAS: "familiar visitou", "médico passou", "troca de plantão", "procedimento realizado", "documentação", "familiar ligou", "falta de fralda", "visitou"
+   EXEMPLOS: "troca de plantão realizada com João às 20h" → "troca de plantão realizada com João às 20h"
 
-INSTRUÇÕES:
-- Extraia APENAS informações explicitamente mencionadas
-- Se não houver informação sobre um tópico, use null
-- Seja específico e detalhado nas extrações
-- Use as notas existentes como contexto adicional
+REGRAS DE INFERÊNCIA INTELIGENTE:
+- "sem informações" ou "nada a relatar" para contexto específico → "Sem informações"
+- Menções gerais como "tudo normal" → classifique como informações clínicas adicionais
+- Informações misturadas → separe por tópico apropriado
+- Negativas também são informações válidas ("não comeu", "não urinou")
+- Frases compostas → extraia cada parte para o tópico correto
+- Contexto implícito → use conhecimento sobre cuidados médicos
 
 SCHEMA:
 {{
   "alimentacao_hidratacao": "string|null",
-  "evacuacoes": "string|null",
+  "evacuacoes": "string|null", 
   "sono": "string|null",
   "humor": "string|null",
   "medicacoes": "string|null",
@@ -95,13 +104,22 @@ SCHEMA:
   "warnings": ["string"]
 }}
 
-EXEMPLOS:
+EXEMPLOS MELHORADOS:
 
-Entrada: "Paciente se alimentou bem no almoço, tomou 500ml de água. Dormiu 6 horas seguidas."
-Saída: {{"alimentacao_hidratacao": "se alimentou bem no almoço, tomou 500ml de água", "sono": "dormiu 6 horas seguidas", "evacuacoes": null, "humor": null, "medicacoes": null, "atividades": null, "informacoes_clinicas_adicionais": null, "informacoes_administrativas": null, "topicos_identificados": ["alimentacao_hidratacao", "sono"], "warnings": []}}
+Entrada: "Paciente comeu bem, tomou bastante água. Dormiu a noite toda."
+Saída: {{"alimentacao_hidratacao": "comeu bem, tomou bastante água", "sono": "dormiu a noite toda", "evacuacoes": null, "humor": null, "medicacoes": null, "atividades": null, "informacoes_clinicas_adicionais": null, "informacoes_administrativas": null, "topicos_identificados": ["alimentacao_hidratacao", "sono"], "warnings": []}}
 
-Entrada: "Administrei dipirona às 14h para dor. Paciente fez fisioterapia e estava bem humorado."
-Saída: {{"medicacoes": "administrei dipirona às 14h para dor", "atividades": "paciente fez fisioterapia", "humor": "estava bem humorado", "alimentacao_hidratacao": null, "evacuacoes": null, "sono": null, "informacoes_clinicas_adicionais": null, "informacoes_administrativas": null, "topicos_identificados": ["medicacoes", "atividades", "humor"], "warnings": []}}
+Entrada: "Dei dipirona para dor. Fez caminhada e estava alegre. Familiar visitou."
+Saída: {{"medicacoes": "dipirona para dor", "atividades": "fez caminhada", "humor": "estava alegre", "informacoes_administrativas": "familiar visitou", "alimentacao_hidratacao": null, "evacuacoes": null, "sono": null, "informacoes_clinicas_adicionais": null, "topicos_identificados": ["medicacoes", "atividades", "humor", "informacoes_administrativas"], "warnings": []}}
+
+Entrada: "Tudo normal, sem intercorrências. Pressão ok."
+Saída: {{"informacoes_clinicas_adicionais": "tudo normal, sem intercorrências, pressão ok", "alimentacao_hidratacao": null, "evacuacoes": null, "sono": null, "humor": null, "medicacoes": null, "atividades": null, "informacoes_administrativas": null, "topicos_identificados": ["informacoes_clinicas_adicionais"], "warnings": []}}
+
+Entrada: "fezes avermelhadas, dormiu normal, houve falta de fralda"
+Saída: {{"evacuacoes": "fezes avermelhadas", "sono": "dormiu normal", "informacoes_administrativas": "houve falta de fralda", "alimentacao_hidratacao": null, "humor": null, "medicacoes": null, "atividades": null, "informacoes_clinicas_adicionais": null, "topicos_identificados": ["evacuacoes", "sono", "informacoes_administrativas"], "warnings": []}}
+
+Entrada: "o paciente vomitou durante o almoço, ficou irritado, jogou vôlei, não foi administrado medicações"
+Saída: {{"alimentacao_hidratacao": "vomitou durante o almoço", "humor": "ficou irritado", "atividades": "jogou vôlei", "medicacoes": "não foi administrado medicações", "evacuacoes": null, "sono": null, "informacoes_clinicas_adicionais": null, "informacoes_administrativas": null, "topicos_identificados": ["alimentacao_hidratacao", "humor", "atividades", "medicacoes"], "warnings": []}}
 
 JSON:"""
     

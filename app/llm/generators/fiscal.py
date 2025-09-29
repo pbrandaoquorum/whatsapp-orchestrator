@@ -149,6 +149,8 @@ CÓDIGOS DE RESULTADO (prioridade máxima):
 REGRA ESPECIAL PARA FINALIZAÇÃO:
 - Quando o código contém "FINALIZATION_", NUNCA mencione sinais vitais (PA, FC, FR, Sat, Temp, condição respiratória)
 - Foque APENAS nos 8 tópicos de finalização: alimentação, evacuações, sono, humor, medicações, atividades, informações clínicas adicionais, informações administrativas
+- IGNORE COMPLETAMENTE a seção "DADOS CLÍNICOS" do contexto durante finalização
+- Mesmo se houver vitais faltantes, NÃO os mencione - finalização não requer sinais vitais
 
 STATUS DO PLANTÃO:
 - "confirmado": Plantão confirmado - permite updates de dados clínicos
@@ -189,6 +191,9 @@ NUNCA:
         vitais_coletados = {k: v for k, v in vitais.items() if v is not None}
         vitais_faltantes = clinico.get("faltantes", [])
         
+        # Verificar se estamos em finalização
+        em_finalizacao = sessao.get('finish_reminder_sent', False)
+        
         contexto = f"""SESSÃO:
 - Telefone: {sessao.get('telefone', 'N/A')}
 - Plantão permitido: {sessao.get('turno_permitido', False)}
@@ -199,7 +204,11 @@ FLUXOS EXECUTADOS: {', '.join(fluxos_executados) if fluxos_executados else 'Nenh
 
 CONFIRMAÇÃO PENDENTE:
 - Tem pendente: {bool(pendente)}
-- Fluxo pendente: {pendente.get('fluxo', 'Nenhum')}
+- Fluxo pendente: {pendente.get('fluxo', 'Nenhum')}"""
+
+        # Só inclui dados clínicos se NÃO estiver em finalização
+        if not em_finalizacao:
+            contexto += f"""
 
 DADOS CLÍNICOS:
 - Vitais coletados: {', '.join([f'{k}={v}' for k, v in vitais_coletados.items()]) if vitais_coletados else 'Nenhum'}
@@ -207,7 +216,9 @@ DADOS CLÍNICOS:
 - Condição respiratória: {clinico.get('supplementaryOxygen') or 'Não informada'}
 - Nota clínica: {f'"{clinico.get("nota")}"' if clinico.get('nota') else 'Não informada'}
 - Dados completos: {bool(vitais_coletados and clinico.get('supplementaryOxygen') and clinico.get('nota'))}
-- RAG: Processado via webhook n8n
+- RAG: Processado via webhook n8n"""
+
+        contexto += f"""
 
 DADOS DE FINALIZAÇÃO:
 - Notas existentes: {len(finalizacao.get('notas_existentes', []))}

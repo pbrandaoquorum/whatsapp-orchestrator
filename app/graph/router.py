@@ -282,8 +282,10 @@ class MainRouter:
                    session_id=state.sessao.get("session_id"),
                    tem_retomada=state.tem_retomada())
         
-        # 0. 🧠 LÓGICA INTELIGENTE: Preserva dados clínicos ANTES de qualquer roteamento
-        self._preservar_dados_clinicos_se_necessario(state)
+        # 0. 🧠 LÓGICA INTELIGENTE: Preserva dados clínicos APENAS se não estiver em finalização
+        # Durante finalização, não devemos extrair dados clínicos
+        if not state.sessao.get("finish_reminder_sent", False):
+            self._preservar_dados_clinicos_se_necessario(state)
         
         # 0.5. 🚨 NOTAS OPERACIONAIS: Verifica se há nota operacional para envio instantâneo
         nota_operacional = self._verificar_nota_operacional(state)
