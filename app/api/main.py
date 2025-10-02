@@ -125,7 +125,17 @@ class WhatsAppOrchestrator:
             
             # 8. Salva resposta fiscal no estado
             state.resposta_fiscal = resposta_final
-            self.dynamo_manager.salvar_estado(session_id, state)
+            
+            # 8.1. Verifica se deve DELETAR estado (finalização de plantão)
+            if state.meta.get("delete_state_after_save"):
+                logger.info("Deletando estado do DynamoDB após finalização",
+                           session_id=session_id)
+                self.dynamo_manager.deletar_estado(session_id)
+                logger.info("Estado deletado com sucesso - plantão finalizado",
+                           session_id=session_id)
+            else:
+                # Salva estado normalmente
+                self.dynamo_manager.salvar_estado(session_id, state)
             
             logger.info("Grafo executado com sucesso",
                        session_id=session_id,

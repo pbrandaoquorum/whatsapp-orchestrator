@@ -50,7 +50,9 @@ class GraphState(BaseModel):
         "vitais": {},  # {"PA":"120x80","FC":78,"FR":18,"Sat":97,"Temp":36.8}
         "faltantes": [],  # ["FR","Sat"]
         "nota": None,  # texto livre
-        "supplementaryOxygen": None  # "Ar ambiente", "Ventilação mecânica", "Oxigênio suplementar"
+        "supplementaryOxygen": None,  # "Ar ambiente", "Ventilação mecânica", "Oxigênio suplementar"
+        "afericao_em_andamento": False,  # Indica se há aferição completa em andamento
+        "afericao_completa_realizada": False  # Flag para indicar se já houve aferição completa no plantão
     })
     
     # Dados operacionais

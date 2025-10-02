@@ -54,13 +54,15 @@ FORMATOS ACEITOS PARA SINAIS VITAIS:
 
 3. PRESSÃO ARTERIAL (PA):
    - Formatos: PA, pressão, PAS/PAD, sistólica/diastólica
-   - Aceite: "120/80", "12x8", "12 por 8", "12 8", "13/9", "14 x 8"
+   - Aceite: "120/80", "12x8", "12 por 8", "12 8", "13/9", "14 x 8", "pa 12 7", "12 7"
    - SEMPRE normalize para formato "PASxPAD":
      * 12/8 → "120x80"
      * 13x9 → "130x90" 
      * 10 por 7 → "100x70"
      * 11.5/7.5 → "115x75"
      * 9.5 por 6.5 → "95x65"
+     * pa 12 7 → "120x70"
+     * 12 7 → "120x70" (quando contexto indica PA)
 
 4. FREQUÊNCIA CARDÍACA (FC):
    - Formatos: FC, fc, pulso, batimentos, bpm, 🫀
@@ -69,9 +71,10 @@ FORMATOS ACEITOS PARA SINAIS VITAIS:
 
 5. TEMPERATURA (Temp):
    - Formatos: T, temp, temperatura, °C, TAX, TX, graus, está, 🌡️
-   - Exemplos: "temp 36.8", "36,2°C", "temperatura está 35", "37 graus"
+   - Exemplos: "temp 36.8", "36,2°C", "temperatura está 35", "37 graus", "t 35", "t35"
    - Inferência por valor: números decimais entre 34.0-41.0
    - Decimais sempre com ponto (37,2 → 37.2)
+   - Formatos compactos: "t 35" → Temp: 35.0
 
 CONDIÇÃO RESPIRATÓRIA (supplementaryOxygen):
 - Identifique APENAS se explicitamente mencionado
@@ -121,6 +124,9 @@ Saída: {{"vitals":{{"PA":"130x90","FC":90,"FR":null,"Sat":null,"Temp":null}},"s
 
 Entrada: "sat 97 fr 21 e temperatura está 35"
 Saída: {{"vitals":{{"PA":null,"FC":null,"FR":21,"Sat":97,"Temp":35.0}},"supplementaryOxygen":null,"nota":null,"rawMentions":{{"FR":"fr 21","Sat":"sat 97","Temp":"temperatura está 35"}},"warnings":[]}}
+
+Entrada: "t 35 pa 12 7 fr 22 fc 84 sat 99"
+Saída: {{"vitals":{{"PA":"120x70","FC":84,"FR":22,"Sat":99,"Temp":35.0}},"supplementaryOxygen":null,"nota":null,"rawMentions":{{"Temp":"t 35","PA":"pa 12 7","FR":"fr 22","FC":"fc 84","Sat":"sat 99"}},"warnings":[]}}
 
 Entrada: "paciente estável, sem alterações"
 Saída: {{"vitals":{{"PA":null,"FC":null,"FR":null,"Sat":null,"Temp":null}},"supplementaryOxygen":null,"nota":"paciente estável, sem alterações","rawMentions":{{}},"warnings":[]}}

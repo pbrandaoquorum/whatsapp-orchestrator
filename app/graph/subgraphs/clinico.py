@@ -205,11 +205,37 @@ class ClinicoSubgraph:
         
         return payload
     
+    def _preparar_payload_n8n_nota_isolada(self, state: GraphState) -> Dict[str, Any]:
+        """Prepara payload para webhook n8n apenas com nota clínica"""
+        sessao = state.sessao
+        clinico = state.clinico
+        
+        # Payload base obrigatório
+        payload = {
+            "reportID": sessao.get("report_id"),
+            "reportDate": sessao.get("data_relatorio"), 
+            "patientIdentifier": sessao.get("patient_id"),
+            "caregiverIdentifier": sessao.get("caregiver_id"),
+            "scheduleID": sessao.get("schedule_id"),
+            "sessionID": sessao.get("telefone")  # phoneNumber
+        }
+        
+        # Apenas nota clínica (obrigatória para este cenário)
+        payload["clinicalNote"] = clinico.get("nota", "")
+        
+        logger.info("Payload n8n nota isolada preparado",
+                   tem_nota=bool(clinico.get("nota")),
+                   payload_keys=list(payload.keys()))
+        
+        return payload
+    
     def _verificar_dados_completos(self, state: GraphState) -> tuple[bool, str]:
         """
         Verifica se os dados clínicos estão completos para envio ao webhook n8n
         
-        Critério: Deve ter pelo menos 1 vital + nota clínica + condição respiratória
+        Critérios:
+        - PRIMEIRA aferição: Deve ter todos os vitais + nota clínica + condição respiratória
+        - AFERIÇÕES SUBSEQUENTES: Deve ter todos os vitais + condição respiratória (nota opcional)
         
         Returns:
             (dados_completos: bool, mensagem_status: str)
@@ -218,28 +244,48 @@ class ClinicoSubgraph:
         vitais = clinico.get("vitais", {})
         nota = clinico.get("nota")
         condicao_resp = clinico.get("supplementaryOxygen")
+        ja_teve_afericao = clinico.get("afericao_completa_realizada", False)
         
-        # Conta vitais válidos
-        vitais_validos = {k: v for k, v in vitais.items() if v is not None}
-        qtd_vitais = len(vitais_validos)
+        # Verifica vitais completos (todos os 5)
+        campos_vitais = ["PA", "FC", "FR", "Sat", "Temp"]
+        vitais_validos = {k: v for k, v in vitais.items() if v is not None and k in campos_vitais}
+        vitais_completos = len(vitais_validos) == 5
         
-        # Deve ter pelo menos 1 vital + nota + condição respiratória
-        tem_vitais = qtd_vitais > 0
         tem_nota = bool(nota)
         tem_condicao_resp = bool(condicao_resp)
         
-        if tem_vitais and tem_nota and tem_condicao_resp:
-            return True, f"Dados completos: {qtd_vitais} vitais + nota clínica + condição respiratória"
+        # REGRA 1: Primeira aferição - EXIGE nota clínica
+        if not ja_teve_afericao:
+            if vitais_completos and tem_nota and tem_condicao_resp:
+                return True, f"Primeira aferição completa: 5 vitais + nota clínica + condição respiratória"
+            else:
+                faltantes = []
+                if not vitais_completos:
+                    faltantes_vitais = [v for v in campos_vitais if not vitais.get(v)]
+                    faltantes.append(f"vitais ({', '.join(faltantes_vitais)})")
+                if not tem_nota:
+                    faltantes.append("nota clínica")
+                if not tem_condicao_resp:
+                    faltantes.append("condição respiratória")
+                
+                return False, f"Falta para primeira aferição: {', '.join(faltantes)}"
+        
+        # REGRA 2: Aferições subsequentes - nota clínica OPCIONAL
         else:
-            faltantes = []
-            if not tem_vitais:
-                faltantes.append("vitais")
-            if not tem_nota:
-                faltantes.append("nota clínica")
-            if not tem_condicao_resp:
-                faltantes.append("condição respiratória")
-            
-            return False, f"Falta: {', '.join(faltantes)} (vitais: {qtd_vitais})"
+            if vitais_completos and tem_condicao_resp:
+                if tem_nota:
+                    return True, f"Aferição completa: 5 vitais + condição respiratória + nota clínica"
+                else:
+                    return True, f"Aferição completa: 5 vitais + condição respiratória (sem nota)"
+            else:
+                faltantes = []
+                if not vitais_completos:
+                    faltantes_vitais = [v for v in campos_vitais if not vitais.get(v)]
+                    faltantes.append(f"vitais ({', '.join(faltantes_vitais)})")
+                if not tem_condicao_resp:
+                    faltantes.append("condição respiratória")
+                
+                return False, f"Falta: {', '.join(faltantes)}"
     
     def _montar_mensagem_confirmacao(self, state: GraphState) -> str:
         """Monta mensagem de confirmação com dados encontrados"""
@@ -312,11 +358,15 @@ class ClinicoSubgraph:
             # Chama webhook n8n
             result = self.http_client.post(webhook_url, payload)
             
+            # Marca que já teve aferição completa no plantão
+            state.clinico["afericao_completa_realizada"] = True
+            
             # Limpa pendente e dados clínicos após envio bem-sucedido
             state.limpar_pendente()
             self._limpar_dados_clinicos(state)
             
-            logger.info("Dados enviados para n8n com sucesso e estado clínico limpo")
+            logger.info("Dados enviados para n8n com sucesso e estado clínico limpo",
+                       afericao_completa_realizada=True)
             
         except Exception as e:
             logger.error("Erro ao enviar dados para n8n", error=str(e))
@@ -325,15 +375,22 @@ class ClinicoSubgraph:
     def _limpar_dados_clinicos(self, state: GraphState):
         """
         Limpa os dados clínicos do estado após envio bem-sucedido
+        Preserva a flag afericao_completa_realizada
         """
+        # Preserva a flag de primeira aferição
+        ja_teve_afericao = state.clinico.get("afericao_completa_realizada", False)
+        
         # Reseta todos os campos clínicos para valores padrão
         state.clinico = {
             "vitais": {},
             "faltantes": ["PA", "FC", "FR", "Sat", "Temp"],
             "nota": None,
-            "supplementaryOxygen": None
+            "supplementaryOxygen": None,
+            "afericao_em_andamento": False,
+            "afericao_completa_realizada": ja_teve_afericao  # Preserva
         }
-        logger.info("Dados clínicos limpos do estado")
+        logger.info("Dados clínicos limpos do estado",
+                   afericao_completa_realizada=ja_teve_afericao)
     
     def processar(self, state: GraphState) -> str:
         """
@@ -401,27 +458,72 @@ class ClinicoSubgraph:
         if not vitais_validos and not tem_nota:
             return "CLINICAL_NO_DATA_FOUND"  # Código para o Fiscal
         
-        # 4. Verifica se dados estão completos para envio ao n8n
-        dados_completos, status_msg = self._verificar_dados_completos(state)
+        # 4. NOVA LÓGICA: Determina o tipo de coleta baseado na regra de primeira aferição
+        ja_teve_afericao_completa = state.clinico.get("afericao_completa_realizada", False)
         
-        if not dados_completos:
-            # Dados parciais - armazena no estado e pede o que falta
-            logger.info("Dados parciais armazenados no estado", status=status_msg)
+        logger.info("Analisando tipo de coleta",
+                   tem_vitais=bool(vitais_validos),
+                   tem_nota=tem_nota,
+                   afericao_em_andamento=state.clinico.get("afericao_em_andamento", False),
+                   ja_teve_afericao_completa=ja_teve_afericao_completa)
+        
+        # REGRA 1: Se NÃO teve aferição completa no plantão, FORÇA aferição completa
+        if not ja_teve_afericao_completa:
+            if tem_nota and not vitais_validos:
+                # Usuário tentou enviar apenas nota na primeira aferição
+                logger.warning("Primeira aferição deve ser completa - rejeitando nota isolada")
+                return "CLINICAL_INCOMPLETE_FIRST_ASSESSMENT"
             
-            if vitais_validos and not tem_nota:
-                return "CLINICAL_PARTIAL_VITALS_ONLY"  # Código para o Fiscal
-            elif tem_nota and not vitais_validos:
-                return "CLINICAL_PARTIAL_NOTE_ONLY"  # Código para o Fiscal
-            else:
-                return "CLINICAL_PARTIAL_DATA"  # Código para o Fiscal
+            # Se há vitais, marca como aferição em andamento
+            if vitais_validos:
+                state.clinico["afericao_em_andamento"] = True
+                logger.info("Primeira aferição em andamento - vitais detectados")
         
-        # 5. Dados completos - prepara confirmação para envio ao n8n
-        payload = self._preparar_payload_n8n(state)
+        # REGRA 2: Se JÁ teve aferição completa, permite nota isolada OU aferição sem nota
+        else:
+            # Se há vitais, marca como aferição em andamento
+            if vitais_validos:
+                state.clinico["afericao_em_andamento"] = True
+                logger.info("Aferição subsequente em andamento - vitais detectados")
+            
+            # Se há apenas nota e não há aferição em andamento, é nota isolada
+            elif tem_nota and not state.clinico.get("afericao_em_andamento", False):
+                logger.info("Nota clínica isolada detectada (após primeira aferição) - enviando diretamente")
+                # Prepara payload apenas com nota
+                payload = self._preparar_payload_n8n_nota_isolada(state)
+                
+                state.pendente = {
+                    "fluxo": "clinico", 
+                    "payload": payload
+                }
+                
+                logger.info("Retornando código CLINICAL_NOTE_READY_FOR_CONFIRMATION")
+                return "CLINICAL_NOTE_READY_FOR_CONFIRMATION"  # Nota isolada após primeira aferição
         
-        state.pendente = {
-            "fluxo": "clinico", 
-            "payload": payload
-        }
+        # 5. Para aferição completa, verifica se todos os dados estão completos
+        if state.clinico.get("afericao_em_andamento", False):
+            dados_completos, status_msg = self._verificar_dados_completos(state)
+            
+            if not dados_completos:
+                # Dados parciais - armazena no estado e pede o que falta
+                logger.info("Dados parciais armazenados no estado", status=status_msg)
+                
+                if vitais_validos and not tem_nota:
+                    return "CLINICAL_PARTIAL_VITALS_ONLY"  # Código para o Fiscal
+                elif tem_nota and not vitais_validos:
+                    return "CLINICAL_PARTIAL_NOTE_ONLY"  # Código para o Fiscal
+                else:
+                    return "CLINICAL_PARTIAL_DATA"  # Código para o Fiscal
+            
+            # 6. Dados completos - prepara confirmação para envio ao n8n
+            payload = self._preparar_payload_n8n(state)
+            
+            state.pendente = {
+                "fluxo": "clinico", 
+                "payload": payload
+            }
+            
+            return "CLINICAL_DATA_READY_FOR_CONFIRMATION"  # Código para o Fiscal
         
-        # 6. Dados completos - aguarda confirmação
-        return "CLINICAL_DATA_READY_FOR_CONFIRMATION"  # Código para o Fiscal
+        # Fallback
+        return "CLINICAL_PARTIAL_DATA"

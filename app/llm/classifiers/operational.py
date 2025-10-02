@@ -62,11 +62,14 @@ class OperationalNoteClassifier:
 TEXTO: "{texto}"
 
 NOTAS OPERACIONAIS são informações sobre:
-- Falta de materiais/medicamentos (ex: "acabou a fralda", "faltou soro", "precisa de gaze")
-- Problemas estruturais (ex: "ar condicionado quebrou", "falta luz", "vazamento")
-- Intercorrências operacionais (ex: "familiar chegou", "médico visitou", "enfermeira passou")
-- Observações sobre equipamentos (ex: "bomba infusora com problema", "monitor desligado")
-- Solicitações de materiais/serviços (ex: "precisa trocar lençol", "chamar técnico")
+- Falta/esgotamento de materiais (ex: "acabou a fralda", "acabou gaze", "faltou soro", "terminou medicação", "sem luvas", "falta algodão")
+- Impossibilidade de aferir dados (ex: "não consegui medir PA", "paciente recusou", "equipamento quebrado", "não foi possível aferir")
+- Problemas estruturais (ex: "ar condicionado quebrou", "falta luz", "vazamento", "sem energia")
+- Intercorrências operacionais (ex: "familiar chegou", "médico visitou", "enfermeira passou", "troca de profissional", "mudança de turno")
+- Observações sobre equipamentos (ex: "bomba infusora com problema", "monitor desligado", "termômetro quebrado")
+- Solicitações de materiais/serviços (ex: "precisa trocar lençol", "chamar técnico", "solicitar material")
+- Questões administrativas urgentes (ex: "troca de plantão", "documentação pendente", "reunião familiar")
+- Qualquer informação administrativa ou logística que NÃO seja dado clínico do paciente
 
 NÃO SÃO NOTAS OPERACIONAIS:
 - Dados clínicos (sinais vitais, sintomas, medicações)
@@ -105,5 +108,20 @@ Saída: {{"is_operational": false, "operational_note": null}}
 
 Entrada: "ventilação mecânica"
 Saída: {{"is_operational": false, "operational_note": null}}
+
+Entrada: "acabou a fralda do paciente"
+Saída: {{"is_operational": true, "operational_note": "acabou a fralda do paciente"}}
+
+Entrada: "faltou medicação"
+Saída: {{"is_operational": true, "operational_note": "faltou medicação"}}
+
+Entrada: "acabou a gaze do paciente"
+Saída: {{"is_operational": true, "operational_note": "acabou a gaze do paciente"}}
+
+Entrada: "não consegui medir a pressão"
+Saída: {{"is_operational": true, "operational_note": "não consegui medir a pressão"}}
+
+Entrada: "troca de profissional às 14h"
+Saída: {{"is_operational": true, "operational_note": "troca de profissional às 14h"}}
 
 JSON:"""

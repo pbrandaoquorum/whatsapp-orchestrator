@@ -81,14 +81,33 @@ O sistema utiliza um **roteamento inteligente** com gates de prioridade para det
 ### 🏥 Fluxos de Negócio Detalhados
 
 #### **📊 Fluxo Clínico**
+
+**🔴 PRIMEIRA AFERIÇÃO (Obrigatória Completa)**
 ```
-1. Coleta via LLM → Sinais vitais (PA, FC, FR, Sat, Temp)
-2. Coleta via LLM → Condição respiratória (Ar ambiente/O2/VM)
-3. Coleta via LLM → Nota clínica (observações do paciente)
+1. Validação → Sistema verifica se já houve aferição completa no plantão
+2. Rejeição → Se usuário envia apenas nota, sistema rejeita e pede aferição completa
+3. Coleta Obrigatória:
+   - ✅ TODOS os sinais vitais (PA, FC, FR, Sat, Temp)
+   - ✅ Condição respiratória (Ar ambiente/O2 suplementar/Ventilação mecânica)
+   - ✅ Nota clínica (observações obrigatórias na primeira aferição)
 4. Validação → Faixas aceitáveis e formato correto
 5. Confirmação → Apresenta resumo completo e pede confirmação
 6. Envio → Webhook n8n → Lambda updateClinicalData
-7. Limpeza → Estado clínico resetado após sucesso
+7. Flag → Marca afericao_completa_realizada=true
+8. Limpeza → Estado clínico resetado (preserva flag)
+```
+
+**🟢 AFERIÇÕES SUBSEQUENTES (Flexíveis)**
+```
+OPÇÃO 1: Aferição Completa (com ou sem nota)
+- ✅ TODOS os sinais vitais (PA, FC, FR, Sat, Temp)
+- ✅ Condição respiratória
+- ⚪ Nota clínica (OPCIONAL - se não houver, usa "sem alterações")
+
+OPÇÃO 2: Nota Clínica Isolada
+- 📝 Apenas nota clínica (sem vitais)
+- ⚡ Processamento direto via webhook n8n
+- ✅ Sem necessidade de confirmação complexa
 ```
 
 #### **⚡ Fluxo Operacional (Instantâneo)**
@@ -100,10 +119,19 @@ O sistema utiliza um **roteamento inteligente** com gates de prioridade para det
 ```
 
 #### **📋 Fluxo de Finalização**
+
+**⚠️ REGRA CRÍTICA: Só Ativa se finishReminderSent=true**
 ```
-1. Trigger → finishReminderSent=true no backend
-2. Recuperação → Notas existentes via getNoteReport
-3. Coleta LLM → 8 tópicos de finalização:
+🚨 Sistema NUNCA menciona "finalização" ou "encerramento" se finishReminderSent=false
+🚨 Fiscal IGNORA completamente dados de finalização quando flag está desabilitada
+```
+
+**🔄 Processo de Finalização:**
+```
+1. Trigger → finishReminderSent=true no backend (getScheduleStarted)
+2. Gate Prioritário → Router redireciona automaticamente para subgrafo finalizar
+3. Recuperação → Notas existentes via getNoteReport
+4. Coleta LLM → 8 tópicos de finalização:
    - Alimentação e Hidratação
    - Evacuações (Fezes e Urina)  
    - Sono
@@ -112,9 +140,9 @@ O sistema utiliza um **roteamento inteligente** com gates de prioridade para det
    - Atividades (físicas e cognitivas)
    - Informações clínicas adicionais
    - Informações administrativas
-4. Envio Parcial → Cada tópico vai para webhook n8n
-5. Confirmação → Resumo completo quando todos preenchidos
-6. Finalização → updatereportsummaryad + limpeza completa do estado
+5. Envio Parcial → Cada tópico vai para webhook n8n
+6. Confirmação → Resumo completo quando todos preenchidos
+7. Finalização → updatereportsummaryad + limpeza completa do estado
 ```
 
 #### **🏥 Fluxo de Escala**

@@ -21,6 +21,7 @@ class FiscalProcessor:
         
         # Inicializa LLM apenas se tiver API key
         if api_key:
+            from app.llm.generators.fiscal import FiscalLLM
             self.fiscal_llm = FiscalLLM(api_key, model)
             logger.info("FiscalProcessor inicializado com LLM", model=model)
         else:
@@ -78,16 +79,16 @@ class FiscalProcessor:
     def _gerar_resposta_fallback(self, entrada_usuario: str) -> str:
         """
         Gera resposta fallback quando LLM não está disponível
-        Ainda assim, evita ser completamente estática
+        Resposta genérica que não depende do conteúdo da mensagem
         """
-        entrada_lower = entrada_usuario.lower()
-        
-        if any(palavra in entrada_lower for palavra in ['ajuda', 'help', 'oi', 'olá']):
-            return "Sistema temporariamente limitado. Tente: confirmo presença, dados vitais, finalizar plantão."
-        elif any(palavra in entrada_lower for palavra in ['pa', 'fc', 'fr', 'sat', 'temp']):
-            return "Dados recebidos. Sistema processando sem confirmação dinâmica no momento."
-        else:
-            return "Sistema em modo básico. Funcionalidades limitadas."
+        return """Sistema temporariamente indisponível. 
+
+Funcionalidades básicas disponíveis:
+• "confirmo presença" - para iniciar plantão
+• Enviar dados clínicos - PA, FC, FR, Sat, Temp
+• "finalizar plantão" - para encerrar
+
+Tente novamente em alguns instantes."""
     
     def processar_resposta_fiscal(self, session_id: str, entrada_usuario: str, codigo_resultado: str = None) -> str:
         """

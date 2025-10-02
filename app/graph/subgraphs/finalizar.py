@@ -227,55 +227,33 @@ class FinalizarSubgraph:
             raise e
     
     def _limpar_estado_completo(self, state: GraphState) -> None:
-        """Limpa completamente o estado após finalização do plantão"""
-        # Mantém apenas dados básicos da sessão (telefone)
-        telefone = state.sessao.get("telefone")
+        """
+        Limpa completamente o estado após finalização do plantão
+        DELETA o registro do DynamoDB para garantir limpeza total
+        """
+        session_id = state.sessao.get("session_id") or state.sessao.get("telefone")
         
-        # Reseta todos os campos
-        state.sessao = {"telefone": telefone}
-        state.entrada = {"texto_usuario": None, "meta": {}}
-        state.roteador = {"intencao": None}
-        state.clinico = {
-            "vitais": {},
-            "faltantes": ["PA", "FC", "FR", "Sat", "Temp"],
-            "nota": None,
-            "supplementaryOxygen": None
-        }
-        state.operacional = {
-            "nota": None,
-            "timestamp": None,
-            "tipo": None
-        }
-        state.finalizacao = {
-            "notas_existentes": [],
-            "topicos": {
-                "alimentacao_hidratacao": None,
-                "evacuacoes": None,
-                "sono": None,
-                "humor": None,
-                "medicacoes": None,
-                "atividades": None,
-                "informacoes_clinicas_adicionais": None,
-                "informacoes_administrativas": None
-            },
-            "faltantes": [
-                "alimentacao_hidratacao",
-                "evacuacoes", 
-                "sono",
-                "humor",
-                "medicacoes",
-                "atividades",
-                "informacoes_clinicas_adicionais",
-                "informacoes_administrativas"
-            ]
-        }
-        state.retomada = None
-        state.pendente = None
-        state.fluxos_executados = []
-        state.resposta_fiscal = None
-        state.meta = {}
+        if not session_id:
+            logger.warning("Não foi possível identificar session_id para deletar estado")
+            return
         
-        logger.info("Estado completamente limpo após finalização")
+        try:
+            # DELETAR registro do DynamoDB em vez de resetar campos
+            # Isso garante limpeza completa e novo início no próximo plantão
+            logger.info("Deletando estado completo do DynamoDB após finalização",
+                       session_id=session_id)
+            
+            # Nota: A deleção será feita pelo DynamoStateManager após este método
+            # Aqui apenas marcamos que o estado deve ser deletado
+            state.meta["delete_state_after_save"] = True
+            
+            logger.info("Estado marcado para deleção após finalização",
+                       session_id=session_id)
+            
+        except Exception as e:
+            logger.error("Erro ao marcar estado para deleção",
+                        session_id=session_id,
+                        error=str(e))
     
     def _gerar_resumo_topicos(self, state: GraphState) -> str:
         """Gera resumo dos tópicos coletados para confirmação"""

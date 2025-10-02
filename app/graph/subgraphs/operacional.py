@@ -84,7 +84,7 @@ class OperacionalSubgraph:
             }
             
             logger.info("Nota operacional enviada para n8n com sucesso")
-            return "OPERATIONAL_NOTE_SENT"
+            return "OPERATIONAL_NOTE_SAVED"
             
         except Exception as e:
             logger.error("Erro ao enviar nota operacional para n8n", error=str(e))

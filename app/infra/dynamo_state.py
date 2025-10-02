@@ -136,6 +136,39 @@ class DynamoStateManager:
             logger.error("Erro inesperado ao salvar estado", session_id=session_id, error=str(e))
             raise
     
+    def deletar_estado(self, session_id: str) -> bool:
+        """
+        Deleta estado do DynamoDB
+        Usado na finalização de plantão para garantir limpeza completa
+        
+        Returns:
+            True se deletado com sucesso, False caso contrário
+        """
+        try:
+            logger.info("Deletando estado do DynamoDB", session_id=session_id)
+            
+            self.dynamodb.delete_item(
+                TableName=self.table_name,
+                Key={
+                    'session_id': {'S': session_id}
+                }
+            )
+            
+            logger.info("Estado deletado com sucesso", session_id=session_id)
+            return True
+            
+        except ClientError as e:
+            logger.error("Erro do DynamoDB ao deletar estado",
+                        session_id=session_id,
+                        error_code=e.response['Error']['Code'],
+                        error_message=e.response['Error']['Message'])
+            return False
+        except Exception as e:
+            logger.error("Erro inesperado ao deletar estado", 
+                        session_id=session_id, 
+                        error=str(e))
+            return False
+    
     def verificar_tabela(self) -> bool:
         """Verifica se a tabela existe e está acessível"""
         try:
