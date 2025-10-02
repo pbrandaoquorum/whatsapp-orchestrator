@@ -79,6 +79,7 @@ class MainRouter:
             # Preenche dados da sessão
             response_status = result.get("response", "").lower()
             shift_allow = result.get("shiftAllow", True)
+            schedule_started = result.get("scheduleStarted", False)
             
             # Lógica correta: só permite se shiftAllow=true E response="confirmado"
             turno_realmente_permitido = shift_allow and response_status == "confirmado"
@@ -93,7 +94,9 @@ class MainRouter:
                 "shift_allow": shift_allow,  # True/False do backend
                 "finish_reminder_sent": result.get("finishReminderSent", False),  # Flag para finalização
                 "empresa": result.get("company"),
-                "cooperativa": result.get("cooperative")
+                "cooperativa": result.get("cooperative"),
+                "substitute_info": result.get("substituteInfo", ""),  # Info de substitutos para plantões cancelados
+                "schedule_started": schedule_started  # Flag que indica se é primeira interação
             })
             
             # Debug: mostrar dados extraídos
@@ -142,18 +145,24 @@ class MainRouter:
         Pode modificar a intenção baseado no estado
         """
         sessao = state.sessao
+        response_status = sessao.get("response", "").lower()
         
-        # Gate 1: Se plantão cancelado -> auxiliar  
-        if sessao.get("response") == "cancelado":
-            logger.info("Plantão cancelado, redirecionando para auxiliar")
-            return "auxiliar"
+        # Gate 1: Se plantão cancelado -> fora_escala  
+        if response_status == "cancelado":
+            logger.info("Plantão cancelado, redirecionando para fora_escala")
+            return "fora_escala"
         
-        # Gate 2: Se turno não permitido por falta de plantão -> auxiliar
+        # Gate 2: Se plantão "sem lembretes" -> fora_escala
+        if response_status == "sem lembretes":
+            logger.info("Plantão sem lembretes, redirecionando para fora_escala")
+            return "fora_escala"
+        
+        # Gate 3: Se turno não permitido por falta de plantão -> auxiliar
         if not sessao.get("shift_allow", True):
             logger.info("Plantão não existe (shiftAllow=false), redirecionando para auxiliar")
             return "auxiliar"
         
-        # Gate 3: Se plantão não confirmado -> sempre escala (para confirmação ou clínico)
+        # Gate 4: Se plantão não confirmado -> sempre escala (para confirmação ou clínico)
         if not self._plantao_confirmado(state):
             response = sessao.get("response", "N/A")
             if intencao == "clinico":

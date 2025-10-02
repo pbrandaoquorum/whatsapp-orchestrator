@@ -10,7 +10,7 @@ from app.api.deps import (
     get_settings, initialize_logging, get_dynamo_state_manager,
     get_main_router, get_fiscal_processor,
     get_escala_subgraph, get_clinico_subgraph, get_operacional_subgraph,
-    get_finalizar_subgraph, get_auxiliar_subgraph
+    get_finalizar_subgraph, get_auxiliar_subgraph, get_fora_escala_subgraph
 )
 from app.infra.dynamo_state import normalizar_session_id
 from app.graph.state import GraphState
@@ -62,7 +62,8 @@ class WhatsAppOrchestrator:
             "clinico": get_clinico_subgraph(),
             "operacional": get_operacional_subgraph(),
             "finalizar": get_finalizar_subgraph(),
-            "auxiliar": get_auxiliar_subgraph()
+            "auxiliar": get_auxiliar_subgraph(),
+            "fora_escala": get_fora_escala_subgraph()
         }
         
         logger.info("WhatsAppOrchestrator inicializado")
@@ -99,7 +100,28 @@ class WhatsAppOrchestrator:
             # 4. Router decide próximo subgrafo
             proximo_subgrafo = self.router.rotear(state)
             
-            # 4.1. Salva estado após router (preservação de dados clínicos)
+            # 4.1. 🧹 PRIMEIRA INTERAÇÃO: Se scheduleStarted=False, limpa estado anterior
+            # Isso garante que cada plantão comece do zero, sem dados do plantão anterior
+            schedule_started = state.sessao.get("schedule_started", True)
+            if not schedule_started and state.sessao.get("schedule_id"):
+                logger.info("🧹 Primeira interação do plantão detectada - limpando estado anterior",
+                           session_id=session_id,
+                           schedule_id=state.sessao.get("schedule_id"))
+                
+                # Deleta estado anterior do DynamoDB
+                self.dynamo_manager.deletar_estado(session_id)
+                
+                # Cria novo estado limpo (mantendo apenas dados da sessão)
+                from app.graph.state import GraphState
+                state_limpo = GraphState()
+                state_limpo.sessao = state.sessao.copy()
+                state_limpo.entrada = state.entrada.copy()
+                state = state_limpo
+                
+                logger.info("✅ Estado anterior deletado - iniciando plantão com estado limpo",
+                           session_id=session_id)
+            
+            # 4.2. Salva estado após router (preservação de dados clínicos)
             self.dynamo_manager.salvar_estado(session_id, state)
             
             logger.info("Router decidiu próximo subgrafo",
@@ -116,6 +138,22 @@ class WhatsAppOrchestrator:
                        session_id=session_id,
                        subgrafo=proximo_subgrafo,
                        codigo_resultado=resultado_subgrafo)
+            
+            # 5.1. Se o código de resultado indicar cancelamento pelo usuário, 
+            # redireciona para fora_escala para tratar substituição
+            if resultado_subgrafo == "SCHEDULE_CANCELLED_BY_USER":
+                logger.info("Plantão cancelado pelo usuário - redirecionando para fora_escala",
+                           session_id=session_id)
+                
+                # Salva estado com response="cancelado"
+                self.dynamo_manager.salvar_estado(session_id, state)
+                
+                # Executa subgrafo fora_escala
+                resultado_subgrafo = self.subgraphs["fora_escala"].processar(state)
+                
+                logger.info("Subgrafo fora_escala executado após cancelamento",
+                           session_id=session_id,
+                           codigo_resultado=resultado_subgrafo)
             
             # 6. Salva estado ANTES do Fiscal
             self.dynamo_manager.salvar_estado(session_id, state)

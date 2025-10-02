@@ -120,6 +120,67 @@ class EscalaSubgraph:
             logger.error("Erro ao consultar escala", error=str(e))
             return "Erro ao consultar dados da escala. Tente novamente."
     
+    def _cancelar_plantao_nao_confirmado(self, state: GraphState) -> str:
+        """
+        Cancela plantão quando usuário responde 'não' à confirmação de presença
+        """
+        try:
+            # Prepara payload para cancelamento
+            payload = {
+                "scheduleID": state.sessao.get("schedule_id"),
+                "responseValue": "cancelado",
+                "caregiverID": state.sessao.get("caregiver_id"),
+                "phoneNumber": state.sessao.get("telefone")
+            }
+            
+            logger.info("Cancelando plantão via updateWorkScheduleResponse", 
+                       schedule_id=payload["scheduleID"])
+            
+            # Chama Lambda para cancelar
+            self.http_client.update_work_schedule(
+                self.lambda_update_schedule_url,
+                payload
+            )
+            
+            # Limpa pendente
+            state.limpar_pendente()
+            
+            # Atualiza estado local para refletir cancelamento
+            state.sessao["response"] = "cancelado"
+            
+            # Re-bootstrap para pegar dados atualizados (incluindo substituteInfo)
+            try:
+                telefone = state.sessao.get("telefone")
+                bootstrap_result = self.http_client.get_schedule_started(
+                    self.lambda_get_schedule_url,
+                    telefone
+                )
+                state.sessao.update({
+                    "schedule_id": bootstrap_result.get("scheduleID"),
+                    "shift_allow": bootstrap_result.get("shiftAllow", True),
+                    "response": bootstrap_result.get("response", "cancelado"),
+                    "caregiver_id": bootstrap_result.get("caregiverID"),
+                    "patient_id": bootstrap_result.get("patientID"),
+                    "report_id": bootstrap_result.get("reportID"),
+                    "data_relatorio": bootstrap_result.get("reportDate"),
+                    "empresa": bootstrap_result.get("company"),
+                    "cooperativa": bootstrap_result.get("cooperative"),
+                    "substitute_info": bootstrap_result.get("substituteInfo", "")
+                })
+                logger.info("Estado atualizado após cancelamento",
+                           response=state.sessao.get("response"),
+                           substitute_info_len=len(state.sessao.get("substitute_info", "")))
+            except Exception as e:
+                logger.warning("Erro no re-bootstrap após cancelamento", error=str(e))
+            
+            # Retorna código especial para o router redirecionar para fora_escala
+            return "SCHEDULE_CANCELLED_BY_USER"
+                
+        except Exception as e:
+            logger.error("Erro ao cancelar plantão", error=str(e))
+            state.limpar_pendente()
+            return f"Erro ao cancelar plantão: {str(e)}. Tente novamente."
+    
     def _executar_acao_confirmada(self, state: GraphState) -> str:
         """Executa ação de escala após confirmação"""
         pendente = state.pendente
@@ -208,8 +269,9 @@ class EscalaSubgraph:
                     if confirmacao == "sim":
                         return self._executar_acao_confirmada(state)
                     elif confirmacao == "nao":
-                        state.limpar_pendente()
-                        return "Ação cancelada."
+                        # Usuário não quer confirmar presença -> cancela o plantão
+                        logger.info("Usuário respondeu 'não' - cancelando plantão")
+                        return self._cancelar_plantao_nao_confirmado(state)
                     else:
                         return "Responda 'sim' para confirmar ou 'não' para cancelar."
                 else:

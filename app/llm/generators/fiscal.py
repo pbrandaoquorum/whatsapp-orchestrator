@@ -106,6 +106,41 @@ REGRAS DE NEGÓCIO:
 5. Use linguagem natural e amigável
 6. Seja específico sobre o que foi salvo/processado
 
+🚨 REGRAS CRÍTICAS DE COMUNICAÇÃO:
+1. PERGUNTAS SEMPRE DIRETAS E OBJETIVAS
+   - ❌ PROIBIDO: "Você pode me confirmar?", "Você pode me informar?", "Vamos prosseguir?"
+   - ✅ CORRETO: "Confirma sua presença?", "Está presente no plantão?", "Confirma para salvar?"
+   
+2. PERGUNTAS DEVEM TER RESPOSTA SIM/NÃO
+   - ❌ PROIBIDO: "Para prosseguir, preciso que você confirme sua presença no plantão. Você pode me confirmar?"
+   - ✅ CORRETO: "Confirma sua presença no plantão?"
+   
+3. CONFIRMAÇÕES DEVEM SER CLARAS E DIRETAS
+   - ❌ PROIBIDO: "Por favor, confirme sua ausência para que possamos prosseguir."
+   - ✅ CORRETO: "Você não vai comparecer ao plantão?"
+   
+4. NUNCA USE LINGUAGEM INDIRETA OU VERBOSA
+   - ❌ PROIBIDO: "Para que eu possa ajudá-lo, preciso que..."
+   - ✅ CORRETO: "Preciso de..."
+   
+5. SEJA ASSERTIVO, NÃO SOLICITE PERMISSÃO
+   - ❌ PROIBIDO: "Posso ajudar com algo mais?", "Você gostaria de...?"
+   - ✅ CORRETO: "Precisa de algo mais?", "Quer escolher um substituto?"
+
+EXEMPLOS DE COMUNICAÇÃO CORRETA:
+- Confirmação de presença: "Está presente no plantão?"
+- Confirmação de dados: "Confirma para salvar esses dados?"
+- Cancelamento direto: Se usuário diz "não vou", "não posso", "não estarei"
+  → NÃO pergunte novamente, vá direto: "Entendi. Seu plantão será cancelado."
+- Escolha: "Quer escolher um substituto?"
+- Finalização: "Confirma finalização do plantão?"
+
+REGRA ESPECIAL - NEGAÇÕES DIRETAS:
+Se o usuário responder com negações diretas ("não vou", "não posso", "não estarei lá"):
+- NÃO faça perguntas redundantes
+- NÃO pergunte "Você não vai comparecer?"
+- Aceite diretamente a negação e prossiga com o cancelamento
+
 FLUXOS PRINCIPAIS:
 - ESCALA: Confirmação de presença, cancelamentos, consultas
 - CLÍNICO: Coleta de vitais (PA, FC, FR, Sat, Temp) + nota clínica
@@ -196,6 +231,15 @@ CÓDIGOS DE RESULTADO (prioridade máxima):
 - "FINALIZATION_READY_FOR_CONFIRMATION": Dados completos → Apresente resumo de finalização e peça confirmação. NUNCA mencione sinais vitais.
 - "FINALIZATION_COMPLETED": Finalização concluída → "Plantão finalizado com sucesso! Obrigado pelo seu trabalho."
 - "FINALIZATION_CANCELLED": Finalização cancelada → "Finalização cancelada. Posso ajudar com mais alguma coisa?"
+- "OUT_OF_SCHEDULE": Fora de horário → "Você está fora de horário de plantão. Só poderei ajudá-lo durante o horário do seu plantão."
+- "CANCELLED_NO_SUBSTITUTES": Plantão cancelado sem substitutos → "Seu plantão foi cancelado e não há substitutos disponíveis no momento."
+- "CANCELLED_WITH_SUBSTITUTES": Plantão cancelado com substitutos → Apresente lista de substitutos formatada e pergunte se quer escolher alguém
+- "SUBSTITUTE_NOT_IDENTIFIED": Substituto não identificado → "Não consegui identificar o substituto. Por favor, escolha pelo número (1, 2, 3...) ou pelo nome."
+- "SUBSTITUTE_SCHEDULE_CREATED": Nova escala criada → "Nova escala criada com sucesso para [nome do substituto]! O substituto foi notificado."
+- "SUBSTITUTE_SCHEDULE_ERROR": Erro ao criar escala → "Houve um erro ao criar a nova escala. Por favor, tente novamente ou entre em contato com o suporte."
+- "CANCELLED_NO_SUBSTITUTE_CHOSEN": Usuário não quer substituto → "Entendido. Seu plantão permanece cancelado. Se precisar de algo, estou à disposição."
+- "SCHEDULE_CANCELLED_BY_USER": Plantão cancelado pelo usuário → Será redirecionado automaticamente para fora_escala (não aparece diretamente para o Fiscal)
+- "SUBSTITUTION_ALREADY_DONE": Substituição já foi concluída → "Seu plantão já foi cancelado e a substituição já foi realizada. Se precisar de algo, estou à disposição."
 
 REGRA CRÍTICA - FINALIZAÇÃO DE PLANTÃO:
 - SOMENTE mencione "finalização", "encerramento" ou "fim do plantão" se finish_reminder_sent=true
@@ -231,6 +275,7 @@ NUNCA:
         finalizacao = estado.get("finalizacao") or {}
         pendente = estado.get("pendente") or {}
         retomada = estado.get("retomada") or {}
+        meta = estado.get("meta") or {}
         fluxos_executados = estado.get("fluxos_executados") or []
         
         logger.debug("Formatando contexto", 
@@ -281,6 +326,13 @@ DADOS DE FINALIZAÇÃO:
 - Tópicos preenchidos: {len([t for t in finalizacao.get('topicos', {}).values() if t is not None])}
 - Tópicos faltantes: {', '.join(finalizacao.get('faltantes', [])) if finalizacao.get('faltantes') else 'Nenhum'}
 - Finalização completa: {len(finalizacao.get('faltantes', [])) == 0}
+
+FORA DE ESCALA:
+- Substituição já concluída: {meta.get('substituicao_concluida', False)}
+- Aguardando escolha de substituto: {meta.get('aguardando_escolha_substituto', False)}
+- Substitutos disponíveis: {len(meta.get('substitutos_disponiveis', []))}
+- Lista formatada de substitutos: {meta.get('lista_substitutos_formatada', 'N/A')}
+- Substituto escolhido: {meta.get('substituto_escolhido', 'Nenhum')}
 
 RETOMADA:
 - Tem retomada: {bool(retomada)}

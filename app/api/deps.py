@@ -19,6 +19,7 @@ from app.graph.subgraphs.clinico import ClinicoSubgraph
 from app.graph.subgraphs.operacional import OperacionalSubgraph
 from app.graph.subgraphs.finalizar import FinalizarSubgraph
 from app.graph.subgraphs.auxiliar import AuxiliarSubgraph
+from app.graph.subgraphs.fora_escala import ForaEscalaSubgraph
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -41,6 +42,7 @@ class Settings:
         self.lambda_update_clinical = os.getenv("LAMBDA_UPDATE_CLINICAL")
         self.lambda_update_summary = os.getenv("LAMBDA_UPDATE_SUMMARY")
         self.lambda_get_note_report = os.getenv("LAMBDA_GET_NOTE_REPORT")
+        self.lambda_create_schedule = os.getenv("LAMBDA_CREATE_SCHEDULE", "https://f35khigesh.execute-api.sa-east-1.amazonaws.com/default/createNewSchedule")
         
         # Pinecone
         self.pinecone_api_key = os.getenv("PINECONE_API_KEY")
@@ -254,6 +256,17 @@ def get_auxiliar_subgraph() -> AuxiliarSubgraph:
     if "auxiliar_subgraph" not in _components:
         _components["auxiliar_subgraph"] = AuxiliarSubgraph()
     return _components["auxiliar_subgraph"]
+
+
+def get_fora_escala_subgraph() -> ForaEscalaSubgraph:
+    """Retorna subgrafo fora de escala"""
+    if "fora_escala_subgraph" not in _components:
+        settings = get_settings()
+        _components["fora_escala_subgraph"] = ForaEscalaSubgraph(
+            http_client=get_http_client(),
+            create_schedule_url=settings.lambda_create_schedule
+        )
+    return _components["fora_escala_subgraph"]
 
 
 def initialize_logging():
